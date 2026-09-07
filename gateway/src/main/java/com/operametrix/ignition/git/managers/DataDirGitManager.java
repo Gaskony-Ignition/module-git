@@ -10,6 +10,9 @@ import org.eclipse.jgit.api.PushCommand;
 import org.eclipse.jgit.api.RemoteSetUrlCommand;
 import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.api.Status;
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.ignore.FastIgnoreRule;
+import org.eclipse.jgit.ignore.IgnoreNode;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.RefUpdate;
@@ -22,6 +25,7 @@ import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.URIish;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -64,6 +68,13 @@ public class DataDirGitManager {
             "**/autobackup/*",
             "**/db_backup_sqlite.idb",
             "**/valueStore.idb",
+            // SQLite write-ahead-log sidecars. Without these the baseline `git add .` races the
+            // tag value store: the directory scan lists valueStore.idb-wal, SQLite checkpoints and
+            // deletes it, and the add dies with FileNotFoundException — so init could never
+            // complete on a gateway that was actually running. Ignoring the .idb itself is not
+            // enough; the sidecars are separate paths. (Gaskony fork, 07/09/2026.)
+            "**/*-wal",
+            "**/*-shm",
             "**/jar-cache/*",
             "**/request*",
             "**/response*",
@@ -668,5 +679,391 @@ public class DataDirGitManager {
             logger.error("Error requesting config scan after restore", e);
             throw new RuntimeException(e);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // .gitignore management (the Versioning page's Excluded-files tree)
+    // ------------------------------------------------------------------
+
+    /**
+     * Everything the page appends lives below this marker, so the template above it — and any
+     * hand-written rule a user added — is never rewritten, reordered or lost.
+     */
+    private static final String MANAGED_MARKER = "# --- managed by the Versioning page below this line ---";
+
+    /** How many entries a folder's include/exclude roll-up will visit before giving up. */
+    private static final int ROLLUP_BUDGET = 2000;
+
+    /**
+     * One row of the exclusion tree.
+     *
+     * @param name      the entry's own name
+     * @param path      repo-relative path, {@code /}-separated, no trailing slash
+     * @param directory whether it is a folder
+     * @param excluded  whether git currently ignores it
+     * @param tracked   whether it is in the index — a tracked file stays tracked whatever
+     *                  {@code .gitignore} says, which is why the two are reported separately
+     * @param rule      the {@code .gitignore} line that decided it, or null if nothing matched
+     * @param ownRule   true when {@code rule} is this exact path's own line (so unticking can
+     *                  delete the line); false when an inherited glob decided it, and the row
+     *                  must be read-only because unticking one path cannot undo a glob
+     * @param childState for folders: INCLUDED, EXCLUDED, MIXED or UNKNOWN (roll-up budget spent)
+     * @param reincludable whether ticking this row can actually re-include it. Git will not
+     *                     re-include anything whose PARENT DIRECTORY is excluded, so a negation
+     *                     under an excluded folder is silently ineffective — the row must be
+     *                     read-only rather than offering an edit that does nothing
+     */
+    public record TreeEntry(String name, String path, boolean directory, boolean excluded,
+                            boolean tracked, String rule, boolean ownRule, String childState,
+                            boolean reincludable) {}
+
+    /** Parsed {@code .gitignore} rules, newest last (git's last-match-wins order). */
+    private static List<FastIgnoreRule> ignoreRules() throws IOException {
+        Path gitignore = dataDir().resolve(".gitignore");
+        if (!Files.exists(gitignore)) {
+            return List.of();
+        }
+        IgnoreNode node = new IgnoreNode();
+        try (InputStream in = Files.newInputStream(gitignore)) {
+            node.parse(in);
+        }
+        return node.getRules();
+    }
+
+    /**
+     * Decide one path against the rules, git-style: the LAST matching rule wins, and a negation
+     * (`!foo`) re-includes. Returns {@code null} when nothing matched.
+     *
+     * <p>Matching is done on the full repo-relative path AND on each trailing path segment, because
+     * a rule without a slash (e.g. {@code *.log}) matches at any depth — {@code FastIgnoreRule}
+     * itself only compares what it is handed.
+     */
+    private static FastIgnoreRule matchRule(List<FastIgnoreRule> rules, String path, boolean isDir) {
+        FastIgnoreRule match = null;
+        for (FastIgnoreRule r : rules) {
+            if (r.isEmpty()) {
+                continue;
+            }
+            boolean hit = r.isMatch("/" + path, isDir, true);
+            if (!hit && r.getNameOnly()) {
+                // A name-only rule applies to every segment, so test the basename too.
+                int slash = path.lastIndexOf('/');
+                hit = r.isMatch("/" + (slash >= 0 ? path.substring(slash + 1) : path), isDir, true);
+            }
+            if (hit) {
+                match = r;
+            }
+        }
+        return match;
+    }
+
+    /**
+     * Whether a path is excluded, taking ancestors into account. Git cannot re-include a file whose
+     * PARENT DIRECTORY is excluded, so an ancestor's exclusion is final for everything beneath it —
+     * a negation deeper down is silently ineffective, and the UI must not offer it.
+     *
+     * @return the deciding rule and whether an ancestor (not the path itself) settled it
+     */
+    private static Decision decide(List<FastIgnoreRule> rules, String path, boolean isDir) {
+        // Walk ancestors root-downwards; the first excluded ancestor settles it.
+        StringBuilder walked = new StringBuilder();
+        for (String segment : path.split("/")) {
+            if (walked.length() > 0) {
+                walked.append('/');
+            }
+            walked.append(segment);
+            String sofar = walked.toString();
+            boolean last = sofar.equals(path);
+            FastIgnoreRule m = matchRule(rules, sofar, last ? isDir : true);
+            if (m != null && m.getResult() && !last) {
+                // An ancestor is excluded — nothing below it can be re-included.
+                return new Decision(m, true);
+            }
+            if (last) {
+                return new Decision(m, false);
+            }
+        }
+        return new Decision(null, false);
+    }
+
+    /** The rule that settled a path, and whether it was inherited from an excluded ancestor. */
+    private record Decision(FastIgnoreRule rule, boolean fromAncestor) {
+        boolean excluded() {
+            return rule != null && rule.getResult();
+        }
+    }
+
+    /** Is this path in the index? Tracked files ignore {@code .gitignore} entirely. */
+    private static boolean isTracked(Repository repo, String path, boolean isDir) throws IOException {
+        DirCache cache = repo.readDirCache();
+        if (!isDir) {
+            return cache.findEntry(path) >= 0;
+        }
+        String prefix = path + "/";
+        for (int i = 0; i < cache.getEntryCount(); i++) {
+            if (cache.getEntry(i).getPathString().startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * List one directory level of the data dir, with each entry's exclusion state. Lazy by design:
+     * a data directory carries history, logs and caches, and eagerly walking it would be both slow
+     * and pointless — the large directories are exactly the excluded ones.
+     *
+     * @param relPath repo-relative directory, or "" / null for the data-dir root
+     */
+    public static List<TreeEntry> listTree(String relPath) {
+        synchronized (DATA_DIR_LOCK) {
+            String base = normalize(relPath);
+            Path dir = base.isEmpty() ? dataDir() : dataDir().resolve(base);
+            if (!dir.normalize().startsWith(dataDir().normalize())) {
+                throw new RuntimeException("Path escapes the data directory: " + relPath);
+            }
+            if (!Files.isDirectory(dir)) {
+                throw new RuntimeException("Not a directory: " + relPath);
+            }
+            List<TreeEntry> out = new ArrayList<>();
+            try (Git git = GitManager.getGit(dataDir())) {
+                Repository repo = git.getRepository();
+                List<FastIgnoreRule> rules = ignoreRules();
+                try (var stream = Files.list(dir)) {
+                    List<Path> entries = stream.sorted(DIR_FIRST).toList();
+                    for (Path p : entries) {
+                        String name = p.getFileName().toString();
+                        if (name.equals(".git")) {
+                            continue; // the repo's own plumbing is not a config choice
+                        }
+                        boolean isDir = Files.isDirectory(p);
+                        String path = base.isEmpty() ? name : base + "/" + name;
+                        Decision d = decide(rules, path, isDir);
+                        boolean excluded = d.excluded();
+                        FastIgnoreRule own = matchRule(rules, path, isDir);
+                        boolean ownRule = own != null && own == d.rule() && isOwnLine(own, path, isDir);
+                        out.add(new TreeEntry(name, path, isDir, excluded,
+                                isTracked(repo, path, isDir),
+                                d.rule() == null ? null : d.rule().toString(), ownRule,
+                                isDir ? rollUp(p, path, rules, excluded) : null,
+                                !d.fromAncestor()));
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Error listing config tree at '" + relPath + "'", e);
+                throw new RuntimeException(e);
+            }
+            return out;
+        }
+    }
+
+    /** Folders before files, then case-insensitive by name — the order a file browser uses. */
+    private static final java.util.Comparator<Path> DIR_FIRST =
+            java.util.Comparator.<Path, Boolean>comparing(p -> !Files.isDirectory(p))
+                    .thenComparing(p -> p.getFileName().toString(), String.CASE_INSENSITIVE_ORDER);
+
+    /**
+     * Whether the deciding rule is this path's own explicit line rather than an inherited glob.
+     * Only an own line can be removed by unticking; a glob has to be negated instead.
+     */
+    private static boolean isOwnLine(FastIgnoreRule rule, String path, boolean isDir) {
+        String text = rule.toString().trim();
+        if (text.startsWith("!")) {
+            text = text.substring(1);
+        }
+        String bare = text.startsWith("/") ? text.substring(1) : text;
+        if (bare.endsWith("/")) {
+            bare = bare.substring(0, bare.length() - 1);
+        }
+        return bare.equals(path) || (isDir && bare.equals(path + "/"));
+    }
+
+    /**
+     * Roll a folder's children up to INCLUDED / EXCLUDED / MIXED so a collapsed folder can show a
+     * partial tick. Recursion stops at excluded directories — everything under one is excluded, and
+     * those are the directories with a hundred thousand files in them.
+     */
+    private static String rollUp(Path dir, String path, List<FastIgnoreRule> rules, boolean selfExcluded) {
+        if (selfExcluded) {
+            return "EXCLUDED";
+        }
+        int[] budget = { ROLLUP_BUDGET };
+        boolean[] seen = { false, false }; // included, excluded
+        boolean complete = walkRollUp(dir, path, rules, budget, seen);
+        if (!complete) {
+            return "UNKNOWN";
+        }
+        if (seen[0] && seen[1]) {
+            return "MIXED";
+        }
+        return seen[1] ? "EXCLUDED" : "INCLUDED";
+    }
+
+    private static boolean walkRollUp(Path dir, String path, List<FastIgnoreRule> rules,
+                                      int[] budget, boolean[] seen) {
+        try (var stream = Files.list(dir)) {
+            for (Path p : (Iterable<Path>) stream::iterator) {
+                if (budget[0]-- <= 0) {
+                    return false;
+                }
+                String name = p.getFileName().toString();
+                if (name.equals(".git")) {
+                    continue;
+                }
+                boolean isDir = Files.isDirectory(p);
+                String child = path + "/" + name;
+                boolean excluded = decide(rules, child, isDir).excluded();
+                seen[excluded ? 1 : 0] = true;
+                if (isDir && !excluded && !walkRollUp(p, child, rules, budget, seen)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** The raw {@code .gitignore}, for the page's source view. Empty string when there is none. */
+    public static String readIgnoreFile() {
+        synchronized (DATA_DIR_LOCK) {
+            try {
+                Path gitignore = dataDir().resolve(".gitignore");
+                return Files.exists(gitignore)
+                        ? Files.readString(gitignore, StandardCharsets.UTF_8) : "";
+            } catch (IOException e) {
+                logger.error("Error reading .gitignore", e);
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    /** Replace {@code .gitignore} wholesale — the source view's Save. */
+    public static void writeIgnoreFile(String text) {
+        synchronized (DATA_DIR_LOCK) {
+            try {
+                String body = text.endsWith("\n") ? text : text + "\n";
+                Files.write(dataDir().resolve(".gitignore"), body.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                logger.error("Error writing .gitignore", e);
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    /**
+     * Apply tick/untick edits from the tree.
+     *
+     * <p>Excluding appends an anchored literal line. Including removes that line if the path owns
+     * one, and otherwise appends a negation — never deleting the glob, because deleting
+     * {@code **}{@code /logs} to recover one file is how a gateway starts versioning a gigabyte of
+     * logs. Appends land under {@link #MANAGED_MARKER} so the template is left alone.
+     *
+     * <p>Excluding a TRACKED path also removes it from the index. A {@code .gitignore} line has no
+     * effect on a file git is already tracking, so without this the page would report an exclusion
+     * that had not happened.
+     *
+     * @return the number of paths whose index entry was dropped
+     */
+    public static int applyIgnoreEdits(List<String> exclude, List<String> include) {
+        synchronized (DATA_DIR_LOCK) {
+            int untracked = 0;
+            try (Git git = GitManager.getGit(dataDir())) {
+                Repository repo = git.getRepository();
+                List<String> lines = new ArrayList<>(
+                        List.of(readIgnoreFile().split("\n", -1)));
+                // Drop the trailing empty produced by the split so appends don't drift downwards.
+                if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+                    lines.remove(lines.size() - 1);
+                }
+
+                for (String raw : include == null ? List.<String>of() : include) {
+                    String path = normalize(raw);
+                    if (path.isEmpty()) {
+                        continue;
+                    }
+                    boolean isDir = Files.isDirectory(dataDir().resolve(path));
+                    boolean removed = lines.removeIf(l -> isLiteralFor(l, path, isDir));
+                    if (!removed) {
+                        // An inherited glob excluded it — negate rather than weaken the glob.
+                        appendManaged(lines, "!/" + path + (isDir ? "/" : ""));
+                        if (isDir) {
+                            // A rule like `**/certificates/*` excludes the CONTENTS, not the
+                            // folder, so negating the folder alone re-includes nothing visible.
+                            // Negate the contents too. Safe because the caller only offers the
+                            // tick when no ancestor directory is excluded (see `reincludable`),
+                            // which is the one case git refuses to re-include.
+                            appendManaged(lines, "!/" + path + "/**");
+                        }
+                    }
+                }
+
+                for (String raw : exclude == null ? List.<String>of() : exclude) {
+                    String path = normalize(raw);
+                    if (path.isEmpty()) {
+                        continue;
+                    }
+                    boolean isDir = Files.isDirectory(dataDir().resolve(path));
+                    // A stale negation would beat the new exclusion, so clear it first.
+                    lines.removeIf(l -> isNegationFor(l, path, isDir)
+                            || (isDir && l.trim().equals("!/" + path + "/**")));
+                    String literal = "/" + path + (isDir ? "/" : "");
+                    if (lines.stream().noneMatch(l -> l.trim().equals(literal))) {
+                        appendManaged(lines, literal);
+                    }
+                    if (isTracked(repo, path, isDir)) {
+                        git.rm().setCached(true).addFilepattern(path).call();
+                        untracked++;
+                    }
+                }
+
+                writeIgnoreFile(String.join("\n", lines));
+            } catch (Exception e) {
+                logger.error("Error applying .gitignore edits", e);
+                throw new RuntimeException(e);
+            }
+            return untracked;
+        }
+    }
+
+    private static void appendManaged(List<String> lines, String line) {
+        int marker = lines.indexOf(MANAGED_MARKER);
+        if (marker < 0) {
+            if (!lines.isEmpty() && !lines.get(lines.size() - 1).isBlank()) {
+                lines.add("");
+            }
+            lines.add(MANAGED_MARKER);
+        }
+        lines.add(line);
+    }
+
+    private static boolean isLiteralFor(String line, String path, boolean isDir) {
+        String t = line.trim();
+        return t.equals("/" + path) || t.equals(path)
+                || (isDir && (t.equals("/" + path + "/") || t.equals(path + "/")));
+    }
+
+    private static boolean isNegationFor(String line, String path, boolean isDir) {
+        String t = line.trim();
+        return t.equals("!/" + path) || t.equals("!" + path)
+                || (isDir && (t.equals("!/" + path + "/") || t.equals("!" + path + "/")));
+    }
+
+    /** Trim slashes and reject traversal, so a path parameter can never leave the data dir. */
+    private static String normalize(String relPath) {
+        if (relPath == null) {
+            return "";
+        }
+        String p = relPath.replace('\\', '/').trim();
+        while (p.startsWith("/")) {
+            p = p.substring(1);
+        }
+        while (p.endsWith("/")) {
+            p = p.substring(0, p.length() - 1);
+        }
+        if (p.equals("..") || p.startsWith("../") || p.contains("/../") || p.endsWith("/..")) {
+            throw new RuntimeException("Invalid path: " + relPath);
+        }
+        return p;
     }
 }

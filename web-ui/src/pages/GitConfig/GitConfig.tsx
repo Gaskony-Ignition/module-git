@@ -14,9 +14,13 @@ import {
 import { errorToast } from "./errors";
 import RemoteSync from "./RemoteSync";
 import HistoryList from "./HistoryList";
+import ExcludedFiles from "./ExcludedFiles";
 import "./_styles.scss";
 
+type Tab = "history" | "excluded";
+
 const GitConfig = () => {
+  const [tab, setTab] = React.useState<Tab>("history");
   const { data, isLoading } = useGetStatusQuery();
   const [init, { isLoading: initing }] = useInitMutation();
   const { data: remote } = useGetRemoteQuery();
@@ -92,7 +96,30 @@ const GitConfig = () => {
       );
     }
 
-    return <HistoryList />;
+    // Two views of the same repo: what HAS been recorded, and what is allowed to be.
+    return (
+      <>
+        <div className="gitcfg-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={tab === "history"}
+            className={tab === "history" ? "is-active" : ""}
+            onClick={() => setTab("history")}
+          >
+            History
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === "excluded"}
+            className={tab === "excluded" ? "is-active" : ""}
+            onClick={() => setTab("excluded")}
+          >
+            Excluded files
+          </button>
+        </div>
+        {tab === "history" ? <HistoryList /> : <ExcludedFiles />}
+      </>
+    );
   };
 
   return (

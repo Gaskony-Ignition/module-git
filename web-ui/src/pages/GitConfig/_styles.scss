@@ -204,3 +204,148 @@
     background: #f3fbf3;
   }
 }
+
+// --- Tabs: History | Excluded files -------------------------------------------------
+.gitcfg-tabs {
+  display: flex;
+  gap: 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+  margin-bottom: 1rem;
+
+  button {
+    appearance: none;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.5rem 0;
+    font: inherit;
+    font-weight: 600;
+    color: #667085;
+    cursor: pointer;
+
+    &.is-active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+  }
+}
+
+// --- Excluded files ------------------------------------------------------------------
+.gitcfg-excluded-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+
+  h3 {
+    margin: 0 0 0.25rem;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  p {
+    margin: 0;
+    color: #555;
+    line-height: 1.5;
+    max-width: 620px;
+  }
+
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+}
+
+.gitcfg-excluded-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.gitcfg-tree {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  // The tree scrolls inside its own box so the page header and the Save button stay put while a
+  // deep folder is being explored — but it takes the height the window actually gives it. A fixed
+  // cap left a third of the page empty below the box, which reads as a broken layout rather than
+  // a deliberate one.
+  height: calc(100vh - 21rem);
+  min-height: 18rem;
+  overflow: auto;
+  padding: 0.25rem 0;
+}
+
+.gitcfg-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 2px 0.5rem 2px 0;
+  line-height: 22px;
+
+  &:hover {
+    background: #f5f7fa;
+  }
+
+  input[type="checkbox"] {
+    margin: 0;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+
+  &.is-locked {
+    // Excluded with its parent: git cannot re-include it, so the row is read-only.
+    opacity: 0.55;
+
+    input[type="checkbox"] {
+      cursor: not-allowed;
+    }
+  }
+}
+
+.gitcfg-tree-twisty {
+  width: 16px;
+  flex-shrink: 0;
+  color: #667085;
+  cursor: pointer;
+}
+
+.gitcfg-tree-icon {
+  color: #98a2b3;
+  flex-shrink: 0;
+  display: flex;
+}
+
+.gitcfg-tree-name {
+  cursor: default;
+  white-space: nowrap;
+
+  &.is-excluded {
+    color: #98a2b3;
+    text-decoration: line-through;
+  }
+}
+
+.gitcfg-tree-rule {
+  margin-left: auto;
+  padding-left: 1rem;
+  color: #98a2b3;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gitcfg-tree-note {
+  padding: 2px 0.5rem;
+  color: #98a2b3;
+  line-height: 22px;
+
+  &.is-error {
+    color: var(--error);
+  }
+}
+
+.gitcfg-ignore-source {
+  width: 100%;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+}

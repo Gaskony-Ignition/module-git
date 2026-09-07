@@ -99,6 +99,36 @@ export type AddCredentialReq =
       secretName: string;
     };
 
+export interface TreeEntry {
+  name: string;
+  path: string;
+  directory: boolean;
+  excluded: boolean;
+  // Tracked files stay tracked whatever .gitignore says, so the two are reported separately.
+  tracked: boolean;
+  // The .gitignore line that decided it, null when nothing matched.
+  rule: string | null;
+  // True when `rule` is this path's own line, so unticking can delete it rather than negate.
+  ownRule: boolean;
+  // Folders only: INCLUDED | EXCLUDED | MIXED | UNKNOWN (roll-up budget spent).
+  childState: string | null;
+  // False when an excluded ANCESTOR settled it — git cannot re-include below an excluded
+  // directory, so the row must not offer a tick that would do nothing.
+  reincludable: boolean;
+}
+export interface TreeResp {
+  path: string;
+  entries: TreeEntry[];
+}
+export interface IgnoreResp {
+  text: string;
+}
+export interface IgnoreEditReq {
+  exclude?: string[];
+  include?: string[];
+  text?: string;
+}
+
 export const gitConfigApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     getStatus: builder.query<StatusResp, void>({
@@ -178,6 +208,20 @@ export const gitConfigApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ["status", "history", "remote"],
     }),
+    getTree: builder.query<TreeResp, string>({
+      query: (path) => `${BASE}/tree?path=${encodeURIComponent(path || "")}`,
+      providesTags: ["tree"],
+    }),
+    getIgnore: builder.query<IgnoreResp, void>({
+      query: () => `${BASE}/ignore`,
+      providesTags: ["ignore"],
+    }),
+    saveIgnore: builder.mutation<{ untracked: number }, IgnoreEditReq>({
+      query: (body) => ({ url: `${BASE}/ignore`, method: "POST", body }),
+      // Editing .gitignore changes what is tracked, so the status and the tree both move;
+      // the gateway auto-commits the edit, so the history does too.
+      invalidatesTags: ["tree", "ignore", "status", "history"],
+    }),
     deinit: builder.mutation<unknown, void>({
       query: () => ({ url: `${BASE}/deinit`, method: "POST", body: {} }),
       invalidatesTags: ["status", "history", "remote"],
@@ -203,4 +247,7 @@ export const {
   useInitMutation,
   useDeinitMutation,
   useUpdateFromRemoteMutation,
+  useGetTreeQuery,
+  useGetIgnoreQuery,
+  useSaveIgnoreMutation,
 } = gitConfigApi;

@@ -32,6 +32,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -251,6 +252,19 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         routes.newRoute("/deinit").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.WRITE)
                 .handler(this::handleDeinit).mount();
+
+        // --- Excluded files (.gitignore management) ---
+        routes.newRoute("/tree").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.READ).nocache()
+                .handler(this::handleTree).mount();
+
+        routes.newRoute("/ignore").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.READ).nocache()
+                .handler(this::handleGetIgnore).mount();
+
+        routes.newRoute("/ignore").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleSaveIgnore).mount();
     }
 
     private Object handleStatus(RequestContext req, HttpServletResponse resp) {
@@ -764,5 +778,80 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         } catch (NumberFormatException e) {
             return def;
         }
+    }
+
+    /**
+     * One directory level of the data dir with each entry's exclusion state. Lazy on purpose — the
+     * big directories in a data dir (db, logs, caches) are exactly the excluded ones, so walking
+     * eagerly would cost the most where it buys the least.
+     */
+    private Object handleTree(RequestContext req, HttpServletResponse resp) {
+        try {
+            String path = req.getParameter("path");
+            JsonArray arr = new JsonArray();
+            for (DataDirGitManager.TreeEntry e : DataDirGitManager.listTree(path)) {
+                JsonObject o = new JsonObject();
+                o.addProperty("name", e.name());
+                o.addProperty("path", e.path());
+                o.addProperty("directory", e.directory());
+                o.addProperty("excluded", e.excluded());
+                o.addProperty("tracked", e.tracked());
+                o.addProperty("rule", e.rule());
+                o.addProperty("ownRule", e.ownRule());
+                o.addProperty("childState", e.childState());
+                o.addProperty("reincludable", e.reincludable());
+                arr.add(o);
+            }
+            JsonObject out = new JsonObject();
+            out.addProperty("path", path == null ? "" : path);
+            out.add("entries", arr);
+            return out.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    private Object handleGetIgnore(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject o = new JsonObject();
+            o.addProperty("text", DataDirGitManager.readIgnoreFile());
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    /**
+     * Two shapes, so the tree never has to reconstruct a file it did not author: {@code {text}}
+     * replaces {@code .gitignore} wholesale (the source view), while {@code {exclude, include}}
+     * applies tick/untick edits by appending to the managed block.
+     */
+    private Object handleSaveIgnore(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            JsonObject out = new JsonObject();
+            if (body.has("text") && !body.get("text").isJsonNull()) {
+                DataDirGitManager.writeIgnoreFile(body.get("text").getAsString());
+                out.addProperty("untracked", 0);
+            } else {
+                int untracked = DataDirGitManager.applyIgnoreEdits(
+                        stringList(body, "exclude"), stringList(body, "include"));
+                out.addProperty("untracked", untracked);
+            }
+            out.addProperty("success", true);
+            return out.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    private static List<String> stringList(JsonObject body, String key) {
+        List<String> out = new ArrayList<>();
+        if (body.has(key) && body.get(key).isJsonArray()) {
+            for (var el : body.getAsJsonArray(key)) {
+                out.add(el.getAsString());
+            }
+        }
+        return out;
     }
 }
