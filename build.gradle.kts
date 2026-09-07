@@ -15,15 +15,19 @@ val min_ignition_version = "8.3.0"
 val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHH"))
 
 allprojects {
-    version = "2.5.0.$timestamp"
+    version = "2.7.0.$timestamp"
 }
 
 ignitionModule {
-    name.set("Git")
-    fileName.set("Git.modl")
+    name.set("Git Integration")
+    fileName.set("GitIntegration.modl")
+    // The id and the com.operametrix.* packages stay: changing them makes this a different module
+    // to the gateway (uninstall/reinstall, config repo re-initialised) and every later merge from
+    // upstream would conflict on paths that no longer match. The Beerware notice in license.html
+    // is retained, as that licence requires.
     id.set("com.operametrix.ignition.git")
     moduleVersion.set("${project.version}")
-    moduleDescription.set("Embeds a Git client into the Ignition Designer for version-controlling project resources.")
+    moduleDescription.set("Version-controls Ignition project resources and gateway config from the Designer and the gateway. Gaskony build of the OperaMetrix Git module.")
     license.set("license.html")
     requiredIgnitionVersion.set(min_ignition_version)
 

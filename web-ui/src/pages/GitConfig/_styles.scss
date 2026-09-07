@@ -266,11 +266,12 @@
   border: 1px solid #e0e0e0;
   border-radius: 4px;
   // The tree scrolls inside its own box so the page header and the Save button stay put while a
-  // deep folder is being explored — but it takes the height the window actually gives it. A fixed
-  // cap left a third of the page empty below the box, which reads as a broken layout rather than
-  // a deliberate one.
-  height: calc(100vh - 21rem);
-  min-height: 18rem;
+  // deep folder is being explored, but it is sized to its content: rooted at config/ it opens on a
+  // handful of rows, and a height that always claimed the window left 400px of empty box under
+  // them. max-height keeps the scrolling behaviour for a deep tree without the void for a shallow
+  // one; min-height stops a two-row tree collapsing to a sliver.
+  max-height: calc(100vh - 21rem);
+  min-height: 12rem;
   overflow: auto;
   padding: 0.25rem 0;
 }

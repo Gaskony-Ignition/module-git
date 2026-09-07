@@ -53,8 +53,22 @@ const FileIcon = () => (
  * loads a level at a time — a data directory carries history, logs and caches, and the biggest
  * directories in it are exactly the excluded ones.
  */
+// The repo covers config/ and nothing else, so the tree is rooted there rather than at the data
+// dir. Rooted at the data dir it opened on forty rows of runtime state — databases, caches, logs —
+// with the one folder that is actually versioned collapsed among them, which read as a flat list.
+const CONFIG_ROOT = "config";
+
 const Row = ({ entry, depth, pending, onToggle }: RowProps) => {
-  const [open, setOpen] = React.useState(false);
+  // The top level of config/ is opened for you: collapsed it is four folder names and no structure,
+  // which is the whole reason the tree used to read as a flat list. Excluded folders stay shut —
+  // nothing under one can be re-included, so expanding them only adds greyed-out rows — and so do
+  // ones too large to have been summarised.
+  const [open, setOpen] = React.useState(
+    depth === 0 &&
+      entry.directory &&
+      !entry.excluded &&
+      entry.childState !== "UNKNOWN"
+  );
   const box = React.useRef<HTMLInputElement>(null);
 
   const pendingState = pending.get(entry.path);
@@ -262,7 +276,9 @@ const ExcludedFiles = () => {
           <h3>Excluded files</h3>
           <p>
             Ticked folders and files are versioned. Everything else is listed in{" "}
-            <code>.gitignore</code> and left out of the config repository.
+            <code>.gitignore</code> and left out of the config repository. Only{" "}
+            <code>config/</code> is versioned, so that is what the tree shows —
+            the rest of the data directory is runtime state.
           </p>
         </div>
         <div className="gitcfg-excluded-actions">
@@ -301,7 +317,12 @@ const ExcludedFiles = () => {
         )
       ) : (
         <div className="gitcfg-tree">
-          <Children path="" depth={0} pending={pending} onToggle={onToggle} />
+          <Children
+            path={CONFIG_ROOT}
+            depth={0}
+            pending={pending}
+            onToggle={onToggle}
+          />
         </div>
       )}
     </div>

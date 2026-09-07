@@ -125,7 +125,7 @@ public class DataDirGitManager {
             try (Git git = Git.init().setDirectory(dataDir().toFile()).call()) {
                 GitManager.disableSsl(git);
                 writeGitignore();
-                git.add().addFilepattern(".").call();
+                stageScope(git, false);
                 // Authored as the gateway (like the auto-commits), not the acting web user, so the
                 // whole config history is uniformly attributed to the gateway.
                 git.commit().setMessage("Initial config-as-code commit").setAuthor(gatewayAuthor(), "").call();
@@ -184,6 +184,20 @@ public class DataDirGitManager {
         }
     }
 
+    /**
+     * Stage the same paths {@link #scopedStatus} reports, so what gets committed is exactly what the
+     * page listed as changed. Staging "." instead committed anything outside {@code config/} that a
+     * .gitignore edit happened to re-include — silently, since the change list never showed it.
+     * {@code update} stages deletions of tracked files; the first pass adds new and modified ones.
+     */
+    private static void stageScope(Git git, boolean update) throws Exception {
+        var add = git.add().setUpdate(update);
+        for (String path : SCOPE) {
+            add = add.addFilepattern(path);
+        }
+        add.call();
+    }
+
     private static Status scopedStatus(Git git) throws Exception {
         var status = git.status();
         for (String path : SCOPE) {
@@ -205,9 +219,8 @@ public class DataDirGitManager {
                 return false;
             }
             try (Git git = GitManager.getGit(dataDir())) {
-                // "." respects .gitignore; the setUpdate pass also stages deletions of tracked files.
-                git.add().addFilepattern(".").call();
-                git.add().setUpdate(true).addFilepattern(".").call();
+                stageScope(git, false);
+                stageScope(git, true);
                 git.commit().setMessage(message).setAuthor(gatewayAuthor(), "").call();
             } catch (Exception e) {
                 logger.error("Error committing data-dir config", e);
