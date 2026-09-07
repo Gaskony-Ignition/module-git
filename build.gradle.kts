@@ -15,7 +15,7 @@ val min_ignition_version = "8.3.0"
 val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHH"))
 
 allprojects {
-    version = "2.4.4.$timestamp"
+    version = "2.5.0.$timestamp"
 }
 
 ignitionModule {

@@ -106,13 +106,16 @@ beforehand paints nothing at all, ever — measured, not assumed.
 path, so a change under them shows from the first resource-backed folder downwards, not on the
 module root. Every lookup is guarded — if a future 8.3.x moves these internals the badges vanish
 and nothing else breaks. Verified in the real Designer 07/09/2026.
-**Known defect (OPEN)**: badges stop painting after the first commit of a Designer session and
-return when the Designer is reopened. Instrumented and ruled out: the poll still runs, `state` still
-holds the right entries, the live tree is still rendering through our wrapper, and `addBadge` is
-still called for every affected row — and nothing paints. The cause is inside the delegate's badge
-collection, which is neither ours nor documented. Fixing it properly means the platform's per-node
-`addBadges` hook, which we cannot reach for nodes other modules own. Don't "fix" this by adding the
-badge earlier — that was tried and is strictly worse.
+**The dot is drawn by a border, NOT by `addBadge`** — this is the important one. The platform's
+badge API looks like the right door and is not: the badge list belongs to the delegate, and after
+the first commit of a Designer session it stops painting what we put in it. Instrumented, not
+guessed: poll still running, state map still right, live tree still rendering through our wrapper,
+`addBadge` still called for every affected row, nothing on screen until the Designer was reopened.
+Two fixes were built and measured and neither worked — adding the badge *before* the delegate
+renders paints nothing at all (it clears the list on entry), and `treeDidChange()` to drop cached
+row bounds changed nothing. A `DotBorder` sidesteps the delegate: Swing paints a border as part of
+the component and its insets reserve the width. Verified across two commit-then-change cycles.
+**Don't "simplify" this back to `addBadge`.**
 
 **Designer popups** are Swing `JDialog`s parented to the Designer frame (`SwingUtilities.getWindowAncestor(parent)` so they overlay correctly on macOS fullscreen); abstract callbacks are overridden in anonymous subclasses inside `GitActionManager`. Concrete RPC signatures and callback names live in the code — don't duplicate them here.
 - `CommitPopup` — pick changes + message; "Amend last commit" pre-fills the last message and allows message-only amend; double-click a row → diff.

@@ -1,7 +1,6 @@
 package com.operametrix.ignition.git;
 
 import com.inductiveautomation.ignition.common.Dataset;
-import com.inductiveautomation.ignition.client.icons.VectorIcon;
 import com.inductiveautomation.ignition.client.util.gui.tree.Badge;
 import com.inductiveautomation.ignition.designer.model.DesignerContext;
 import com.inductiveautomation.ignition.designer.navtree.NavTreePanel;
@@ -12,12 +11,18 @@ import com.jidesoft.docking.DockingManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.swing.JComponent;
 import javax.swing.JTree;
 import javax.swing.SwingUtilities;
+import javax.swing.border.Border;
+import javax.swing.border.CompoundBorder;
 import javax.swing.tree.TreeCellRenderer;
 import java.awt.Color;
 import java.awt.Component;
-import java.awt.geom.Ellipse2D;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Insets;
+import java.awt.RenderingHints;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -31,12 +36,8 @@ import java.util.Map;
  * badges of exactly this kind (concurrent users, overridden resource, notes). What it does not
  * offer is a way to badge nodes we do not own — a Perspective view's node belongs to the
  * Perspective module. So this wraps the tree's cell renderer instead: the wrapper delegates
- * rendering, then adds our badge to the component that comes back.
- *
- * <p>That is safe because {@code PanelBasedTreeCellRenderer.getTreeCellRendererComponent} returns
- * the renderer itself and Swing paints it afterwards, so a badge added on the way out is still
- * painted. It is verified rather than assumed — {@link #wrap} checks the returned component IS the
- * delegate and silently does nothing if a future release changes that.
+ * rendering, then puts a {@link DotBorder} on the component that comes back, and Swing draws the
+ * dot as part of that component.
  *
  * <p>None of this is a documented extension point, so every lookup is guarded: if the Designer's
  * internals move, the badges quietly disappear and nothing else breaks.
@@ -48,16 +49,17 @@ import java.util.Map;
  * deletion was completely invisible in the Project Browser while the Commit panel beside it listed
  * the change — measured in the Designer 07/09/2026.
  *
- * <p><b>Known defect (open).</b> Badges stop painting after the first commit of a Designer
- * session, and come back when the Designer is reopened. It is NOT a data problem and not the
- * wrapper coming unhooked: with the module instrumented, the poll still runs, {@code state} still
- * holds the right entries, {@link #reassert} confirms the live tree is still rendering through our
- * wrapper, and {@code addBadge} is still called for every affected row — and nothing paints. The
- * cause is in how the delegate collects badges, which is not ours and not documented. Adding the
- * badge before the delegate renders is not the answer: the delegate clears its list at the start of
- * the call, so that paints nothing at all, ever (measured). Fixing this properly means abandoning
- * the wrapper for the platform's per-node {@code addBadges} hook, which we cannot reach for nodes
- * other modules own. Measured on 8.3.8, 07/09/2026.
+ * <p><b>Why a border and not {@code addBadge}.</b> The platform's own badge API looked like the
+ * right door and is not: the badge list belongs to the delegate, and after the first commit of a
+ * Designer session it stops painting what we put in it. That was instrumented, not guessed -- the
+ * poll still ran, the state map was still right, the live tree was still rendering through our
+ * wrapper, {@code addBadge} was still called for every affected row, and nothing appeared until the
+ * Designer was reopened. Two plausible fixes were built and measured and neither worked: adding the
+ * badge before the delegate renders paints nothing at all (it clears the list on entry), and
+ * {@code treeDidChange()} to drop cached row bounds changed nothing. Drawing the dot ourselves in a
+ * {@link DotBorder} sidesteps the delegate entirely -- Swing paints a border as part of the
+ * component and its insets reserve the width, so the row is measured with room for the dot rather
+ * than clipping it. Verified across two commit-then-change cycles on 8.3.8, 07/09/2026.
  *
  * <p><b>Known limit.</b> The mark rolls up to ancestor folders by resource path, so a collapsed
  * folder still shows that something inside it changed — but only for folders that ARE resource
@@ -199,9 +201,20 @@ public final class GitChangeBadges {
 
     private static void repaint() {
         JTree t = tree;
-        if (t != null) {
-            SwingUtilities.invokeLater(t::repaint);
+        if (t == null) {
+            return;
         }
+        SwingUtilities.invokeLater(() -> {
+            // repaint() alone is not enough. The badge is added on the way out of the renderer, so
+            // a row whose bounds were cached BEFORE it had a badge is too narrow to draw one -- the
+            // dot lands outside the row's clip and simply is not there. Expanding a folder or
+            // reopening the Designer re-measures and it comes back, which is exactly the shape of
+            // the "badges stop after the first commit" symptom: after a commit nothing re-measures.
+            // treeDidChange() drops the UI's cached path bounds so every row is measured again with
+            // its badge present.
+            t.treeDidChange();
+            t.repaint();
+        });
     }
 
     // --------------------------------------------------------------- install
@@ -273,43 +286,52 @@ public final class GitChangeBadges {
 
     // ---------------------------------------------------------------- render
 
-    private static Badge badge(String type) {
-        Color colour;
-        String tip;
+    private static Color colourFor(String type) {
         switch (type) {
             case CREATED_TYPE:
-                colour = CREATED;
-                tip = "Created — not yet committed";
-                break;
+                return CREATED;
             case DELETED_TYPE:
-                colour = DELETED;
-                tip = "Deleted — not yet committed";
-                break;
             case CONTAINS_DELETED:
-                colour = DELETED;
-                tip = "Contains a deleted resource — not yet committed";
-                break;
-            case CONTAINS:
-                colour = MODIFIED;
-                tip = "Contains uncommitted changes";
-                break;
-            case UNCOMMITTED:
-                colour = MODIFIED;
-                tip = "Modified — not yet committed";
-                break;
+                return DELETED;
             default:
-                // Not a failure: badge it as a change and say what we saw, so a new gateway type
-                // is a log line rather than a silently mislabelled dot.
-                colour = MODIFIED;
-                tip = "Changed (" + type + ") — not yet committed";
-                if (unknownTypes.add(type)) {
-                    logger.info("Unrecognised git change type '{}'; badging it as modified", type);
+                if (!CONTAINS.equals(type) && !UNCOMMITTED.equals(type) && unknownTypes.add(type)) {
+                    // Not a failure: draw it as a change and say what we saw, so a new gateway type
+                    // is a log line rather than a silently mislabelled dot.
+                    logger.info("Unrecognised git change type '{}'; showing it as modified", type);
                 }
-                break;
+                return MODIFIED;
         }
-        int off = (BOX - DOT) / 2;
-        VectorIcon icon = new VectorIcon(new Ellipse2D.Double(off, off, DOT, DOT), BOX, BOX, colour);
-        return new Badge(icon, tip);
+    }
+
+    /** Reserves room on the right of a row and draws the change dot in it. */
+    private static final class DotBorder implements Border {
+        private final Color colour;
+
+        DotBorder(Color colour) {
+            this.colour = colour;
+        }
+
+        @Override
+        public Insets getBorderInsets(Component c) {
+            return new Insets(0, 0, 0, BOX);
+        }
+
+        @Override
+        public boolean isBorderOpaque() {
+            return false;
+        }
+
+        @Override
+        public void paintBorder(Component c, Graphics g, int x, int y, int width, int height) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(colour);
+                g2.fillOval(x + width - BOX + (BOX - DOT) / 2, y + (height - DOT) / 2, DOT, DOT);
+            } finally {
+                g2.dispose();
+            }
+        }
     }
 
     /**
@@ -330,20 +352,30 @@ public final class GitChangeBadges {
                                                       boolean hasFocus) {
             Component c = delegate.getTreeCellRendererComponent(t, value, selected, expanded, leaf,
                     row, hasFocus);
-            // The badge must be added AFTER the delegate has built the row: the delegate clears its
-            // badge list at the start of that call, so adding beforehand is wiped every time and
-            // nothing ever paints (measured -- it is not a theoretical ordering preference).
-            //
-            // Panel-based renderers return themselves and Swing paints them straight afterwards, so
-            // a badge added here is still painted. If a future release returns something else,
-            // decorating it would be wrong, so leave the row alone.
-            if (c != delegate) {
+            // The dot is drawn by a BORDER on the row component, not handed to the delegate's
+            // addBadge. addBadge looks like the right door and is not: the badge list is the
+            // delegate's private business, and after the first commit of a session it stops
+            // painting what we put in it -- instrumented and confirmed, with the badge computed and
+            // addBadge called on every pass while nothing appeared. A border cannot be dropped like
+            // that: Swing paints it as part of the component, and its insets reserve the width, so
+            // the row is measured with room for the dot instead of clipping it.
+            if (!(c instanceof JComponent)) {
                 return c;
             }
             try {
+                JComponent jc = (JComponent) c;
+                Border current = jc.getBorder();
+                // The delegate rebuilds the border per row, but unwrap defensively so a dot can
+                // never nest inside a previous dot.
+                if (current instanceof CompoundBorder
+                        && ((CompoundBorder) current).getInsideBorder() instanceof DotBorder) {
+                    current = ((CompoundBorder) current).getOutsideBorder();
+                }
                 String type = typeFor(value);
                 if (type != null) {
-                    delegate.addBadge(badge(type), selected);
+                    jc.setBorder(new CompoundBorder(current, new DotBorder(colourFor(type))));
+                } else if (jc.getBorder() != current) {
+                    jc.setBorder(current);
                 }
             } catch (Exception ignored) {
                 // Painting must never throw — a bad row would repeat on every repaint.
