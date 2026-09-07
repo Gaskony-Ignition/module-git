@@ -41,6 +41,24 @@ import java.util.Map;
  * <p>None of this is a documented extension point, so every lookup is guarded: if the Designer's
  * internals move, the badges quietly disappear and nothing else breaks.
  *
+ * <p><b>Deletions have no node.</b> When a resource is deleted the Designer removes it from the
+ * tree, so there is nothing left to badge and a red dot on the resource itself is impossible. The
+ * roll-up is therefore the only way a deletion can be seen at all, and it carries the severity up:
+ * a folder holding a deleted child reads red rather than the ordinary orange. Without that a
+ * deletion was completely invisible in the Project Browser while the Commit panel beside it listed
+ * the change — measured in the Designer 07/09/2026.
+ *
+ * <p><b>Known defect (open).</b> Badges stop painting after the first commit of a Designer
+ * session, and come back when the Designer is reopened. It is NOT a data problem and not the
+ * wrapper coming unhooked: with the module instrumented, the poll still runs, {@code state} still
+ * holds the right entries, {@link #reassert} confirms the live tree is still rendering through our
+ * wrapper, and {@code addBadge} is still called for every affected row — and nothing paints. The
+ * cause is in how the delegate collects badges, which is not ours and not documented. Adding the
+ * badge before the delegate renders is not the answer: the delegate clears its list at the start of
+ * the call, so that paints nothing at all, ever (measured). Fixing this properly means abandoning
+ * the wrapper for the platform's per-node {@code addBadges} hook, which we cannot reach for nodes
+ * other modules own. Measured on 8.3.8, 07/09/2026.
+ *
  * <p><b>Known limit.</b> The mark rolls up to ancestor folders by resource path, so a collapsed
  * folder still shows that something inside it changed — but only for folders that ARE resource
  * nodes. Several top-level module folders are not ({@code PerspectiveNavNode} and
@@ -64,11 +82,30 @@ public final class GitChangeBadges {
     private static final Color CREATED = new Color(0x58, 0xA6, 0x4B);
     private static final Color DELETED = new Color(0xD1, 0x3B, 0x3B);
 
+    // The gateway's getUncommitedChanges dataset spells the type out in full; these are the values
+    // it actually emits, confirmed against a live 8.3.8 Designer on 07/09/2026. "Uncommitted" is a
+    // modification -- it used to badge correctly only because it fell through to the default branch,
+    // which would have silently mislabelled any type added later.
+    private static final String CREATED_TYPE = "Created";
+    private static final String DELETED_TYPE = "Deleted";
+    private static final String UNCOMMITTED = "Uncommitted";
+    /** Synthetic marks, never emitted by the gateway. */
+    private static final String CONTAINS = "Contains";
+    private static final String CONTAINS_DELETED = "ContainsDeleted";
+
     /** Resource path -> change type, including ancestor folders so a collapsed folder still shows. */
     private static volatile Map<String, String> state = Collections.emptyMap();
 
     private static JTree tree;
     private static Wrapper installed;
+    /** Kept so the wrapper can be re-asserted if the Designer swaps the tree or its renderer. */
+    private static volatile DesignerContext ctx;
+    /** So a re-assert does not repeat the install line on every poll. */
+    private static final java.util.concurrent.atomic.AtomicBoolean announced =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    /** Types the gateway emitted that we do not know about — logged once each, not per repaint. */
+    private static final java.util.Set<String> unknownTypes =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private GitChangeBadges() {}
 
@@ -90,17 +127,74 @@ public final class GitChangeBadges {
                     continue;
                 }
                 String path = res.toString();
-                next.put(path, type == null ? "Modified" : type.toString());
+                String kind = type == null ? UNCOMMITTED : type.toString();
+                next.put(path, kind);
                 // Roll the mark up the tree. Without this a change is invisible until you have
                 // expanded every folder above it, which is most of what makes the editor version
                 // of this readable.
+                //
+                // A DELETED resource has no node left to badge -- the Designer removed it from the
+                // tree -- so the roll-up is the only place a deletion can be shown at all. Carry the
+                // severity up rather than a flat "something changed": a folder whose child was
+                // deleted reads red, which is the whole point of noticing a deletion.
+                String mark = DELETED_TYPE.equals(kind) ? CONTAINS_DELETED : CONTAINS;
                 for (int slash = path.lastIndexOf('/'); slash > 0; slash = path.lastIndexOf('/', slash - 1)) {
-                    next.putIfAbsent(path.substring(0, slash), "Contains");
+                    String ancestor = path.substring(0, slash);
+                    String held = next.get(ancestor);
+                    // A real change on the folder itself always wins over a roll-up mark, and
+                    // CONTAINS_DELETED wins over plain CONTAINS.
+                    if (held == null || (CONTAINS.equals(held) && CONTAINS_DELETED.equals(mark))) {
+                        next.put(ancestor, mark);
+                    }
                 }
             }
         }
         state = next;
+        // The Project Browser is not ours: the Designer is free to rebuild the tree or replace its
+        // cell renderer, and when it does our wrapper goes with it and the badges quietly stop.
+        // Re-asserting on every poll is idempotent and costs one reference comparison.
+        reassert();
         repaint();
+    }
+
+    /**
+     * Re-install the wrapper if the live Project Browser is no longer rendering through it. Cheap
+     * (a docking lookup and a reference compare); runs on every poll.
+     *
+     * <p>It deliberately re-reads the tree from the docking manager rather than trusting the cached
+     * reference. Committing replaces the Project Browser's JTree, and the old instance keeps our
+     * wrapper on it quite happily — so a check of {@code tree.getCellRenderer()} passes while the
+     * tree the user is actually looking at has the Designer's own renderer and no badges. That is
+     * exactly how badges went silent after the first commit of a session.
+     */
+    private static void reassert() {
+        DesignerContext c = ctx;
+        if (c == null) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            try {
+                JTree live = liveTree(c);
+                if (live == null) {
+                    return;
+                }
+                if (live == tree && live.getCellRenderer() == installed) {
+                    return;
+                }
+                installed = null;
+                tree = null;
+                doInstall(c);
+            } catch (Exception e) {
+                logger.debug("Could not re-assert git change badges", e);
+            }
+        });
+    }
+
+    /** The Project Browser's current tree, or null if the Designer's internals have moved. */
+    private static JTree liveTree(DesignerContext context) {
+        DockingManager dm = context.getDockingManager();
+        DockableFrame frame = dm == null ? null : dm.getFrame(PROJECT_BROWSER_KEY);
+        return frame instanceof NavTreePanel ? ((NavTreePanel) frame).getTree() : null;
     }
 
     private static void repaint() {
@@ -114,33 +208,48 @@ public final class GitChangeBadges {
 
     /** Wrap the Project Browser's cell renderer. Idempotent; never throws into the caller. */
     public static void install(DesignerContext context) {
+        ctx = context;
         SwingUtilities.invokeLater(() -> {
-            try {
-                if (installed != null) {
-                    return;
-                }
-                DockingManager dm = context.getDockingManager();
-                DockableFrame frame = dm == null ? null : dm.getFrame(PROJECT_BROWSER_KEY);
-                if (!(frame instanceof NavTreePanel)) {
-                    logger.debug("Project Browser frame is not a NavTreePanel; change badges not installed");
-                    return;
-                }
-                JTree t = ((NavTreePanel) frame).getTree();
-                TreeCellRenderer delegate = t == null ? null : t.getCellRenderer();
-                if (!(delegate instanceof BadgeTreeCellRenderer)) {
-                    logger.debug("Project Browser renderer is not a BadgeTreeCellRenderer; change badges not installed");
-                    return;
-                }
-                installed = new Wrapper((BadgeTreeCellRenderer) delegate);
-                t.setCellRenderer(installed);
-                tree = t;
-                t.repaint();
-                logger.info("Git change badges installed on the Project Browser");
-            } catch (Exception e) {
-                // A missing internal is not worth breaking the Designer over.
-                logger.debug("Could not install git change badges", e);
+            if (installed != null) {
+                return;
             }
+            doInstall(context);
         });
+    }
+
+    /** Must run on the EDT. */
+    private static void doInstall(DesignerContext context) {
+        try {
+            JTree t = liveTree(context);
+            if (t == null) {
+                logger.debug("Project Browser frame is not a NavTreePanel; change badges not installed");
+                return;
+            }
+            TreeCellRenderer delegate = t.getCellRenderer();
+            if (delegate instanceof Wrapper) {
+                // Already ours. Wrapping again would nest wrappers and draw the badge twice --
+                // which is exactly what a re-assert on every poll would do without this guard.
+                installed = (Wrapper) delegate;
+                tree = t;
+                return;
+            }
+            if (!(delegate instanceof BadgeTreeCellRenderer)) {
+                logger.debug("Project Browser renderer is not a BadgeTreeCellRenderer; change badges not installed");
+                return;
+            }
+            installed = new Wrapper((BadgeTreeCellRenderer) delegate);
+            t.setCellRenderer(installed);
+            tree = t;
+            t.repaint();
+            if (announced.compareAndSet(false, true)) {
+                logger.info("Git change badges installed on the Project Browser");
+            } else {
+                logger.debug("Git change badges re-asserted on the Project Browser");
+            }
+        } catch (Exception e) {
+            // A missing internal is not worth breaking the Designer over.
+            logger.debug("Could not install git change badges", e);
+        }
     }
 
     /** Put the Designer's own renderer back. Safe to call when nothing was installed. */
@@ -155,6 +264,8 @@ public final class GitChangeBadges {
             } finally {
                 installed = null;
                 tree = null;
+                ctx = null;
+                announced.set(false);
                 state = Collections.emptyMap();
             }
         });
@@ -166,21 +277,34 @@ public final class GitChangeBadges {
         Color colour;
         String tip;
         switch (type) {
-            case "Created":
+            case CREATED_TYPE:
                 colour = CREATED;
                 tip = "Created — not yet committed";
                 break;
-            case "Deleted":
+            case DELETED_TYPE:
                 colour = DELETED;
                 tip = "Deleted — not yet committed";
                 break;
-            case "Contains":
+            case CONTAINS_DELETED:
+                colour = DELETED;
+                tip = "Contains a deleted resource — not yet committed";
+                break;
+            case CONTAINS:
                 colour = MODIFIED;
                 tip = "Contains uncommitted changes";
                 break;
-            default:
+            case UNCOMMITTED:
                 colour = MODIFIED;
                 tip = "Modified — not yet committed";
+                break;
+            default:
+                // Not a failure: badge it as a change and say what we saw, so a new gateway type
+                // is a log line rather than a silently mislabelled dot.
+                colour = MODIFIED;
+                tip = "Changed (" + type + ") — not yet committed";
+                if (unknownTypes.add(type)) {
+                    logger.info("Unrecognised git change type '{}'; badging it as modified", type);
+                }
                 break;
         }
         int off = (BOX - DOT) / 2;
@@ -206,9 +330,13 @@ public final class GitChangeBadges {
                                                       boolean hasFocus) {
             Component c = delegate.getTreeCellRendererComponent(t, value, selected, expanded, leaf,
                     row, hasFocus);
-            // The badge is added to the component the delegate returns. Panel-based renderers
-            // return themselves; if a future release returns something else, adding a badge would
-            // decorate the wrong component, so leave the row alone.
+            // The badge must be added AFTER the delegate has built the row: the delegate clears its
+            // badge list at the start of that call, so adding beforehand is wiped every time and
+            // nothing ever paints (measured -- it is not a theoretical ordering preference).
+            //
+            // Panel-based renderers return themselves and Swing paints them straight afterwards, so
+            // a badge added here is still painted. If a future release returns something else,
+            // decorating it would be wrong, so leave the row alone.
             if (c != delegate) {
                 return c;
             }

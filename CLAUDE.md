@@ -93,10 +93,26 @@ AND asserted at runtime (`c != delegate` → leave the row alone). The frame com
 dataset the Commit panel polls, so the tree can never disagree with the Changes list beside it; the
 dataset's `resource` column is already a resource-path string, which is exactly what
 `AbstractResourceNavTreeNode.getResourcePath()` reports, so no path translation is needed.
+**Deletions have no node to badge.** A deleted resource is removed from the tree, so a red dot on
+the resource itself is impossible; the roll-up carries the severity instead, and a folder holding a
+deleted child reads red rather than orange. Without that a deletion was invisible in the tree while
+the Commit panel beside it listed it. The dataset's type vocabulary is `Created` / `Uncommitted` /
+`Deleted` — `Uncommitted`, not `Modified`, so it used to badge correctly only by falling through the
+default branch; the mapping is explicit now and an unknown type logs once.
+**Badge ordering is not a preference**: the badge must be added AFTER the delegate has built the
+row. The delegate clears its badge list at the start of `getTreeCellRendererComponent`, so adding
+beforehand paints nothing at all, ever — measured, not assumed.
 **Known limit**: `PerspectiveNavNode` / `VisionModuleNode` are not resource nodes and report no
 path, so a change under them shows from the first resource-backed folder downwards, not on the
 module root. Every lookup is guarded — if a future 8.3.x moves these internals the badges vanish
 and nothing else breaks. Verified in the real Designer 07/09/2026.
+**Known defect (OPEN)**: badges stop painting after the first commit of a Designer session and
+return when the Designer is reopened. Instrumented and ruled out: the poll still runs, `state` still
+holds the right entries, the live tree is still rendering through our wrapper, and `addBadge` is
+still called for every affected row — and nothing paints. The cause is inside the delegate's badge
+collection, which is neither ours nor documented. Fixing it properly means the platform's per-node
+`addBadges` hook, which we cannot reach for nodes other modules own. Don't "fix" this by adding the
+badge earlier — that was tried and is strictly worse.
 
 **Designer popups** are Swing `JDialog`s parented to the Designer frame (`SwingUtilities.getWindowAncestor(parent)` so they overlay correctly on macOS fullscreen); abstract callbacks are overridden in anonymous subclasses inside `GitActionManager`. Concrete RPC signatures and callback names live in the code — don't duplicate them here.
 - `CommitPopup` — pick changes + message; "Amend last commit" pre-fills the last message and allows message-only amend; double-click a row → diff.
