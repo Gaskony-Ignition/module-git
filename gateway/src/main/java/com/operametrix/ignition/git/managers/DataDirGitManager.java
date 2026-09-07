@@ -172,7 +172,7 @@ public class DataDirGitManager {
 
                 Set<String> survivors = GitManager.filterJsonOrderingChanges(repo, dataDir(), byPath.keySet());
                 for (Map.Entry<String, String> e : byPath.entrySet()) {
-                    if (survivors.contains(e.getKey())) {
+                    if (survivors.contains(e.getKey()) && !isNestedRepo(e.getKey())) {
                         changes.add(new ConfigChange(e.getKey(), e.getValue()));
                     }
                 }
@@ -182,6 +182,16 @@ public class DataDirGitManager {
             }
             return changes;
         }
+    }
+
+    /**
+     * Whether a reported path is itself a git repository. {@code config/resources} is one, so JGit
+     * reports it modified whenever the inner repo moves while {@code add} can never stage it — the
+     * repo is permanently dirty and the auto-committer writes an empty commit on every config
+     * change. An inner repo keeps its own history; it is not this repo's change to record.
+     */
+    private static boolean isNestedRepo(String path) {
+        return Files.isDirectory(dataDir().resolve(path).resolve(".git"));
     }
 
     /**
