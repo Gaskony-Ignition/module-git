@@ -281,6 +281,9 @@ public class DesignerHook extends AbstractDesignerModuleHook {
         });
         panelVisibilityTimer.start();
 
+        // Mark changed resources in the Project Browser, fed by the same refresh below.
+        GitChangeBadges.install(context);
+
         // Auto-refresh timer
         commitRefreshTimer = new Timer(15000, e -> refreshCommitPanel());
         commitRefreshTimer.start();
@@ -305,6 +308,9 @@ public class DesignerHook extends AbstractDesignerModuleHook {
             try {
                 Dataset ds = rpc.getUncommitedChanges(projectName, userName);
                 commitPanel.setChangesData(ds);
+                // The Project Browser badges read the same dataset — one poll feeds both, so the
+                // marks in the tree can never disagree with the Changes list beside them.
+                GitChangeBadges.update(ds);
             } catch (Exception e) {
                 // Silently ignore refresh errors
             }
@@ -433,6 +439,8 @@ public class DesignerHook extends AbstractDesignerModuleHook {
             panelVisibilityTimer.stop();
             panelVisibilityTimer = null;
         }
+
+        GitChangeBadges.uninstall();
 
         cleanupCommitPanel();
         cleanupHistoryPanel();

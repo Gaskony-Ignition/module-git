@@ -79,6 +79,25 @@ Scopes: D = Designer, G = Gateway. The Vision client scope is unused — there i
 
 The page is React (8.3 gateway pages are React-only via `NavigationModel`; Wicket config pages are gone, and there is **no** module-accessible API for a global banner-on-all-pages or a dynamic nav badge — verified against `gateway-api-8.3.6`). It talks to the gateway via REST routes mounted in `GatewayHook.mountRouteHandlers` (NOT the RPC interface), under `/data/git-config/…`: `GET /status|/history|/commit-files|/file-diff|/remote|/secret-providers|/tree|/ignore`, `POST /restore|/init|/deinit|/remote|/remote-remove|/remote-test|/push|/ignore`. Reads require `PermissionType.READ`, mutations `WRITE`; the acting author is `RequestContext.getActor()`. The frontend lives in `web-ui/` and is built from the standard `@inductiveautomation/ignition-web-ui` components (`DataGrid`, `Chip`, `Button`, `PageHeader`, `Modal`, `Loading`, `Tooltip`, and the drawer/form set `Drawer`/`DrawerTemplate`/`Card`/`Form`/`FormControlInput`/`Radio`/`SelectInput`/`TextInput`/`TextArea`/`TextAutocomplete`) — imported through `src/webui.ts`, a one-line shim that re-exports them cast to `any` (the package publishes strict internal prop types, e.g. `DataGrid` requires `paginationParams`/`setTableQueryParams` that have runtime defaults; the shim lets us pass only the props we need, mirroring the storybook examples). RTK Query targets a single `BASE` constant in `src/config.ts` (adjust if the live route prefix differs from `/data/git-config`); the base query lazily fetches `/csrf` and attaches the `X-CSRF-Token` header on mutations (the gateway's web-session access control rejects unsafe methods without it). Webpack emits a UMD bundle to `mounted/gitConfig.js`, packed into the gateway jar via `modlImplementation(project(":web-ui"))`, served at `/res/git-config/gitConfig.js`, and mounted as component `GitConfigPage`.
 
+**Project Browser change badges** (`GitChangeBadges`, Gaskony fork 07/09/2026) — resources that are
+changed and not yet committed carry a coloured dot in the Designer's Project Browser: green created,
+red deleted, orange modified, orange on an ancestor folder that contains changes. The platform has
+the right mechanism (`AbstractNavTreeNode.addBadges(BadgeTreeCellRenderer, boolean)`, and the
+Designer ships badges of this kind already — concurrent users, overridden, notes) but no way to
+badge nodes we do not own, so the tree's cell renderer is **wrapped**: the wrapper delegates, then
+calls `addBadge` on what comes back. That is sound because `PanelBasedTreeCellRenderer
+.getTreeCellRendererComponent` returns `this` and Swing paints it afterwards — verified in bytecode
+AND asserted at runtime (`c != delegate` → leave the row alone). The frame comes from
+`DockingManager.getFrame("Project Browser")` cast to `NavTreePanel`, whose `getTree()` is public.
+**No new RPC**: `DesignerHook.refreshCommitPanel` feeds the badges the same `getUncommitedChanges`
+dataset the Commit panel polls, so the tree can never disagree with the Changes list beside it; the
+dataset's `resource` column is already a resource-path string, which is exactly what
+`AbstractResourceNavTreeNode.getResourcePath()` reports, so no path translation is needed.
+**Known limit**: `PerspectiveNavNode` / `VisionModuleNode` are not resource nodes and report no
+path, so a change under them shows from the first resource-backed folder downwards, not on the
+module root. Every lookup is guarded — if a future 8.3.x moves these internals the badges vanish
+and nothing else breaks. Verified in the real Designer 07/09/2026.
+
 **Designer popups** are Swing `JDialog`s parented to the Designer frame (`SwingUtilities.getWindowAncestor(parent)` so they overlay correctly on macOS fullscreen); abstract callbacks are overridden in anonymous subclasses inside `GitActionManager`. Concrete RPC signatures and callback names live in the code — don't duplicate them here.
 - `CommitPopup` — pick changes + message; "Amend last commit" pre-fills the last message and allows message-only amend; double-click a row → diff.
 - `DiffViewerPopup` — side-by-side LCS line diff (green added / red removed, synced scroll); default headers HEAD/Working Tree, overridable (used by `MergeConflictPopup` and `CommitDetailPopup`).
