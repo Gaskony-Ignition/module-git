@@ -77,7 +77,6 @@ public final class GitChangeBadges {
 
     /** Badge diameter in px — matches the platform's own 12px badges. */
     private static final int DOT = 9;
-    private static final int BOX = 12;
 
     // VS Code's colour grammar, which is what people already read without being told.
     private static final Color MODIFIED = new Color(0xE2, 0xA0, 0x3F);
@@ -313,7 +312,11 @@ public final class GitChangeBadges {
 
         @Override
         public Insets getBorderInsets(Component c) {
-            return new Insets(0, 0, 0, BOX);
+            // No space is reserved: the dot is an overlay on the leading icon, not a trailing
+            // element. Reserving a trailing inset does not work here — the nav tree's renderer
+            // sizes itself from its icon and text and ignores the border, so the row never grew
+            // and the dot was painted straight over the last letter of the resource name.
+            return new Insets(0, 0, 0, 0);
         }
 
         @Override
@@ -326,8 +329,18 @@ public final class GitChangeBadges {
             Graphics2D g2 = (Graphics2D) g.create();
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                // Bottom-left corner of the leading icon, the way an editor badges a changed
+                // file. A halo in the row's own background keeps it readable on the icon and on
+                // a selected row alike.
+                int left = x + 1;
+                int top = y + height - DOT - 1;
+                Color halo = c.getBackground();
+                if (halo != null) {
+                    g2.setColor(halo);
+                    g2.fillOval(left - 1, top - 1, DOT + 2, DOT + 2);
+                }
                 g2.setColor(colour);
-                g2.fillOval(x + width - BOX + (BOX - DOT) / 2, y + (height - DOT) / 2, DOT, DOT);
+                g2.fillOval(left, top, DOT, DOT);
             } finally {
                 g2.dispose();
             }

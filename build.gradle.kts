@@ -14,8 +14,12 @@ val min_ignition_version = "8.3.0"
 
 val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHH"))
 
+// version.properties is the single source of truth, so release.sh and the build agree.
+val releaseVersion = file("version.properties").readLines()
+    .first { it.startsWith("version=") }.substringAfter("=").trim()
+
 allprojects {
-    version = "2.8.0.$timestamp"
+    version = "$releaseVersion.$timestamp"
 }
 
 ignitionModule {
