@@ -55,6 +55,12 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
         }
 
         try (Git git = getGit(getProjectFolderPath(projectName))) {
+            if (git.getRepository().resolve("HEAD") == null) {
+                // An init that never reached its first checkout: finish it instead of
+                // asking the remote for a branch this repo does not have.
+                checkoutRemote(projectName, userName, git);
+                return true;
+            }
             PullCommand pull = git.pull();
             pull.setRemote(remoteName);
             setAuthentication(pull, projectName, userName, remoteName);
@@ -266,62 +272,88 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
      * which supply the clone URL directly — nothing is persisted; {@code .git/config}
      * subsequently owns the remote configuration.
      *
+     * A {@code .git} left behind by an earlier attempt that failed before its first
+     * checkout (a rejected credential, say) has no HEAD commit. It is finished here
+     * rather than skipped: skipping it registered the project on an unborn branch,
+     * every resource showed as a change, and a pull then asked the remote for a
+     * branch it never had. A {@code .git} this call created is removed on failure so
+     * the retry starts clean.
+     *
      * @param repoUri the clone URL, or {@code null}/empty for a local-only repository
      */
     private void materializeRepo(String projectName, String userName, String repoUri) throws Exception {
         Path projectFolderPath = getProjectFolderPath(projectName);
-        Path path = projectFolderPath.resolve(".git");
-        if (Files.exists(path)) {
-            return;
-        }
-
-        if (repoUri == null || repoUri.isEmpty()) {
-            // Local-only repo: just create .git
-            try (Git git = Git.init().setDirectory(projectFolderPath.toFile()).call()) {
-                disableSsl(git);
+        Path gitDir = projectFolderPath.resolve(".git");
+        boolean created = !Files.exists(gitDir);
+        try (Git git = created
+                ? Git.init().setDirectory(projectFolderPath.toFile()).call()
+                : getGit(projectFolderPath)) {
+            if (!created && git.getRepository().resolve("HEAD") != null) {
+                return;
             }
-            return;
-        }
-
-        try (Git git = Git.init().setDirectory(projectFolderPath.toFile()).call()) {
             disableSsl(git);
-
-            final URIish urIish = new URIish(repoUri);
-
-            git.remoteAdd().setName("origin").setUri(urIish).call();
-
-            // Lightweight ls-remote to detect the default branch without downloading objects
-            LsRemoteCommand lsRemote = git.lsRemote().setRemote("origin").setHeads(true);
-            setAuthentication(lsRemote, projectName, userName, "origin");
-            java.util.Collection<Ref> remoteRefs = lsRemote.call();
-
-            if (remoteRefs.isEmpty()) {
-                // Empty remote — push current project as initial content
-                setupGitFromCurrentFolder(projectName, userName, git);
-            } else {
-                // Detect default branch, then shallow-fetch only that branch
-                String defaultBranch = detectDefaultBranchFromRefs(remoteRefs);
-
-                FetchCommand fetch = git.fetch()
-                        .setRemote("origin")
-                        .setRefSpecs(new RefSpec(
-                                "+refs/heads/" + defaultBranch + ":refs/remotes/origin/" + defaultBranch))
-                        .setDepth(1);
-                setAuthentication(fetch, projectName, userName, "origin");
-                fetch.call();
-
-                setupGitFromRemoteRepo(projectName, defaultBranch, git);
-
-                // Unshallow to pull full commit history for the History panel
-                FetchCommand unshallow = git.fetch()
-                        .setRemote("origin")
-                        .setUnshallow(true);
-                setAuthentication(unshallow, projectName, userName, "origin");
-                unshallow.call();
+            if (repoUri == null || repoUri.isEmpty()) {
+                // Local-only repo: just create .git
+                return;
             }
+            URIish uri = new URIish(repoUri);
+            if (git.getRepository().getConfig().getSubsections("remote").contains("origin")) {
+                git.remoteSetUrl().setRemoteName("origin").setRemoteUri(uri).call();
+            } else {
+                git.remoteAdd().setName("origin").setUri(uri).call();
+            }
+            checkoutRemote(projectName, userName, git);
         } catch (Exception e) {
             logger.error("An error occurred while setting up local repo for '" + projectName + "' project.", e);
+            if (created) {
+                deleteRecursively(gitDir);
+            }
             throw e;
+        }
+    }
+
+    /**
+     * Bring an unborn repository with an {@code origin} up to the remote's default branch,
+     * or push the current folder up when the remote is empty.
+     */
+    private void checkoutRemote(String projectName, String userName, Git git) throws Exception {
+        // Lightweight ls-remote to detect the default branch without downloading objects
+        LsRemoteCommand lsRemote = git.lsRemote().setRemote("origin").setHeads(true);
+        setAuthentication(lsRemote, projectName, userName, "origin");
+        java.util.Collection<Ref> remoteRefs = lsRemote.call();
+        if (remoteRefs.isEmpty()) {
+            // Empty remote — push current project as initial content
+            setupGitFromCurrentFolder(projectName, userName, git);
+            return;
+        }
+        // Detect default branch, then shallow-fetch only that branch
+        String defaultBranch = detectDefaultBranchFromRefs(remoteRefs);
+        FetchCommand fetch = git.fetch()
+                .setRemote("origin")
+                .setRefSpecs(new RefSpec(
+                        "+refs/heads/" + defaultBranch + ":refs/remotes/origin/" + defaultBranch))
+                .setDepth(1);
+        setAuthentication(fetch, projectName, userName, "origin");
+        fetch.call();
+        setupGitFromRemoteRepo(projectName, defaultBranch, git);
+        // Unshallow to pull full commit history for the History panel
+        FetchCommand unshallow = git.fetch()
+                .setRemote("origin")
+                .setUnshallow(true);
+        setAuthentication(unshallow, projectName, userName, "origin");
+        unshallow.call();
+    }
+
+    private void deleteRecursively(Path root) {
+        try (java.util.stream.Stream<Path> walk = Files.walk(root)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (java.io.IOException ignored) {
+                }
+            });
+        } catch (java.io.IOException e) {
+            logger.warn("Could not remove " + root + " after a failed init", e);
         }
     }
 

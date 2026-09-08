@@ -3,6 +3,23 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.11.1] - 2026-09-08
+
+### Fixed
+- **Initialize-from-remote no longer strands a project on an unborn branch.** An init
+  that failed after creating `.git` — a token awaiting approval, say — left the
+  directory behind when it rolled its records back. The retry then registered the
+  project and skipped the clone, because the check for existing work was "does `.git`
+  exist" rather than "does this repository have a commit". The project sat on an
+  unborn `master` with every resource showing as a change, and Pull asked the remote
+  for a branch that had never existed there: *Remote origin did not advertise Ref for
+  branch master*.
+
+  An existing `.git` with no HEAD is now treated as an unfinished clone and completed,
+  a `.git` created by a failed attempt is deleted so the retry starts clean, and Pull
+  on a repository with no HEAD finishes the clone instead of running a merge. A
+  project already in this state recovers with one Pull after upgrading.
+
 ## [2.11.0] - 2026-09-08
 
 ### Added
