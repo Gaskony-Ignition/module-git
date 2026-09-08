@@ -4,7 +4,7 @@ Two additions to the OperaMetrix module, investigated against the 8.3.6 SDK
 (`com.inductiveautomation.ignition:designer:8.3.6`, `client-api:8.3.6`) and
 JGit 6.10.1. Both are feasible. Findings, design and risks below.
 
-Fork context: `Gaskony-Ignition/module-git` (private mirror), `upstream` =
+Fork context: `Gaskony-Ignition/module-git` (public since 08/09/2026), `upstream` =
 `operametrix/ignition-git-module` at 2.1.0. Licence is Beerware — retain the
 notice in `LICENSE.md`.
 
