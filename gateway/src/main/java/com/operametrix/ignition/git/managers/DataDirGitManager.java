@@ -1,6 +1,8 @@
 package com.operametrix.ignition.git.managers;
 
 import com.inductiveautomation.ignition.common.util.LoggerEx;
+import com.operametrix.ignition.git.automation.GitEvent;
+import com.operametrix.ignition.git.automation.GitEvents;
 import com.operametrix.ignition.git.records.GitConfigRemoteRecord;
 import org.eclipse.jgit.api.CommitCommand;
 import org.eclipse.jgit.api.FetchCommand;
@@ -228,12 +230,18 @@ public class DataDirGitManager {
             if (!isInitialized() || getStatus().isEmpty()) {
                 return false;
             }
+            List<String> changed = getStatus().stream().map(ConfigChange::path).toList();
             try (Git git = GitManager.getGit(dataDir())) {
                 stageScope(git, false);
                 stageScope(git, true);
-                git.commit().setMessage(message).setAuthor(gatewayAuthor(), "").call();
+                var commit = git.commit().setMessage(message).setAuthor(gatewayAuthor(), "").call();
+                GitEvents.fire(GitEvent.of(GitEvent.AUTOCOMMIT).config()
+                        .user(gatewayAuthor()).commit(commit.getName())
+                        .message(message).files(changed).success());
             } catch (Exception e) {
                 logger.error("Error committing data-dir config", e);
+                GitEvents.fire(GitEvent.of(GitEvent.AUTOCOMMIT).config()
+                        .user(gatewayAuthor()).files(changed).failure(GitEvents.reason(e)));
                 throw new RuntimeException(e);
             }
             return true;
@@ -378,6 +386,20 @@ public class DataDirGitManager {
         if (remote == null) {
             throw new RuntimeException("No remote configured.");
         }
+        try {
+            doPush(remote);
+            GitEvents.fire(GitEvent.of(GitEvent.PUSH).config()
+                    .user(gatewayAuthor()).branch(remote.getBranch()).remote(remote.getUri())
+                    .message("Pushed gateway config to " + remote.getBranch()).success());
+        } catch (RuntimeException e) {
+            GitEvents.fire(GitEvent.of(GitEvent.PUSH).config()
+                    .user(gatewayAuthor()).branch(remote.getBranch()).remote(remote.getUri())
+                    .failure(GitEvents.reason(e)));
+            throw e;
+        }
+    }
+
+    private static void doPush(GitConfigRemoteRecord remote) {
         synchronized (DATA_DIR_LOCK) {
             try (Git git = GitManager.getGit(dataDir())) {
                 PushCommand push = git.push()

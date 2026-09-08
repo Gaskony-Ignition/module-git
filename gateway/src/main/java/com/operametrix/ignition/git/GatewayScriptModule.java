@@ -1,5 +1,7 @@
 package com.operametrix.ignition.git;
 
+import com.operametrix.ignition.git.automation.GitEvent;
+import com.operametrix.ignition.git.automation.GitEvents;
 import com.operametrix.ignition.git.managers.*;
 import com.operametrix.ignition.git.records.GitProjectsConfigRecord;
 import com.operametrix.ignition.git.records.GitRemoteCredentialsRecord;
@@ -42,6 +44,37 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
         this.context = context;
     }
 
+    // ── Event detail lookups ───────────────────────────────────────────────────────────────────
+    // Best-effort by design: an event carries context, so failing to read the branch must degrade
+    // the event rather than fail the git operation that raised it.
+
+    private String branchQuietly(String projectName) {
+        try {
+            return GitManager.getCurrentBranch(getProjectFolderPath(projectName));
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String headQuietly(String projectName) {
+        try (Git git = Git.open(getProjectFolderPath(projectName).toFile())) {
+            org.eclipse.jgit.lib.ObjectId head = git.getRepository().resolve("HEAD");
+            return head == null ? "" : head.getName();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** The remote's URL, so a trigger can derive owner/repo; falls back to its name. */
+    private String remoteUrlQuietly(String projectName, String remoteName) {
+        try {
+            String url = GitManager.getRemoteUrl(getProjectFolderPath(projectName), remoteName);
+            return url == null || url.isBlank() ? remoteName : url;
+        } catch (Exception e) {
+            return remoteName;
+        }
+    }
+
     @Override
     public boolean pullImpl(String projectName,
                             String userName,
@@ -49,6 +82,27 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
                             boolean importTags,
                             boolean importTheme,
                             boolean importImages) throws Exception {
+        try {
+            boolean ok = doPull(projectName, userName, remoteName, importTags, importTheme, importImages);
+            GitEvents.fire(GitEvent.of(GitEvent.PULL)
+                    .project(projectName).user(userName).remote(remoteName)
+                    .branch(branchQuietly(projectName)).commit(headQuietly(projectName))
+                    .message("Pulled from " + remoteName).success());
+            return ok;
+        } catch (Exception e) {
+            GitEvents.fire(GitEvent.of(GitEvent.PULL)
+                    .project(projectName).user(userName).remote(remoteName)
+                    .branch(branchQuietly(projectName)).failure(GitEvents.reason(e)));
+            throw e;
+        }
+    }
+
+    private boolean doPull(String projectName,
+                           String userName,
+                           String remoteName,
+                           boolean importTags,
+                           boolean importTheme,
+                           boolean importImages) throws Exception {
 
         if (!projectHasRemote(projectName)) {
             throw new RuntimeException("No remote repository configured. Add a remote before pulling.");
@@ -58,7 +112,7 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
             if (git.getRepository().resolve("HEAD") == null) {
                 // An init that never reached its first checkout: finish it instead of
                 // asking the remote for a branch this repo does not have.
-                checkoutRemote(projectName, userName, git);
+                checkoutRemote(projectName, userName, remoteName, git);
                 return true;
             }
             PullCommand pull = git.pull();
@@ -102,6 +156,24 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
 
     @Override
     public boolean pushImpl(String projectName, String userName, String remoteName, boolean pushAllBranches, boolean pushTags, boolean forcePush) throws Exception {
+        try {
+            boolean ok = doPush(projectName, userName, remoteName, pushAllBranches, pushTags, forcePush);
+            GitEvents.fire(GitEvent.of(GitEvent.PUSH)
+                    .project(projectName).user(userName)
+                    .remote(remoteUrlQuietly(projectName, remoteName))
+                    .branch(branchQuietly(projectName)).commit(headQuietly(projectName))
+                    .message("Pushed to " + remoteName).success());
+            return ok;
+        } catch (Exception e) {
+            GitEvents.fire(GitEvent.of(GitEvent.PUSH)
+                    .project(projectName).user(userName)
+                    .remote(remoteUrlQuietly(projectName, remoteName))
+                    .branch(branchQuietly(projectName)).failure(GitEvents.reason(e)));
+            throw e;
+        }
+    }
+
+    private boolean doPush(String projectName, String userName, String remoteName, boolean pushAllBranches, boolean pushTags, boolean forcePush) throws Exception {
         if (!projectHasRemote(projectName)) {
             throw new RuntimeException("No remote repository configured. Add a remote before pushing.");
         }
@@ -145,6 +217,23 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
 
     @Override
     protected boolean commitImpl(String projectName, String userName, List<String> changes, String message, boolean amend) {
+        try {
+            boolean ok = doCommit(projectName, userName, changes, message, amend);
+            GitEvents.fire(GitEvent.of(GitEvent.COMMIT)
+                    .project(projectName).user(userName).branch(branchQuietly(projectName))
+                    .commit(headQuietly(projectName)).message(message)
+                    .files(changes == null ? List.of() : changes).success());
+            return ok;
+        } catch (RuntimeException e) {
+            GitEvents.fire(GitEvent.of(GitEvent.COMMIT)
+                    .project(projectName).user(userName).branch(branchQuietly(projectName))
+                    .files(changes == null ? List.of() : changes)
+                    .failure(GitEvents.reason(e)));
+            throw e;
+        }
+    }
+
+    private boolean doCommit(String projectName, String userName, List<String> changes, String message, boolean amend) {
         if (message == null || message.trim().isEmpty()) {
             throw new RuntimeException("Commit message cannot be empty.");
         }
@@ -302,7 +391,7 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
             } else {
                 git.remoteAdd().setName("origin").setUri(uri).call();
             }
-            checkoutRemote(projectName, userName, git);
+            checkoutRemote(projectName, userName, "origin", git);
         } catch (Exception e) {
             logger.error("An error occurred while setting up local repo for '" + projectName + "' project.", e);
             if (created) {
@@ -313,13 +402,18 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
     }
 
     /**
-     * Bring an unborn repository with an {@code origin} up to the remote's default branch,
-     * or push the current folder up when the remote is empty.
+     * Bring an unborn repository up to the named remote's default branch, or push the current
+     * folder up when that remote is empty.
+     *
+     * <p>The remote is a parameter rather than a hardcoded {@code origin} because
+     * {@link #pullImpl} routes here for an unborn repository and carries the remote the caller
+     * actually asked for — using origin regardless would silently pull from the wrong place.
      */
-    private void checkoutRemote(String projectName, String userName, Git git) throws Exception {
+    private void checkoutRemote(String projectName, String userName, String remoteName, Git git)
+            throws Exception {
         // Lightweight ls-remote to detect the default branch without downloading objects
-        LsRemoteCommand lsRemote = git.lsRemote().setRemote("origin").setHeads(true);
-        setAuthentication(lsRemote, projectName, userName, "origin");
+        LsRemoteCommand lsRemote = git.lsRemote().setRemote(remoteName).setHeads(true);
+        setAuthentication(lsRemote, projectName, userName, remoteName);
         java.util.Collection<Ref> remoteRefs = lsRemote.call();
         if (remoteRefs.isEmpty()) {
             // Empty remote — push current project as initial content
@@ -329,18 +423,18 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
         // Detect default branch, then shallow-fetch only that branch
         String defaultBranch = detectDefaultBranchFromRefs(remoteRefs);
         FetchCommand fetch = git.fetch()
-                .setRemote("origin")
-                .setRefSpecs(new RefSpec(
-                        "+refs/heads/" + defaultBranch + ":refs/remotes/origin/" + defaultBranch))
+                .setRemote(remoteName)
+                .setRefSpecs(new RefSpec("+refs/heads/" + defaultBranch
+                        + ":refs/remotes/" + remoteName + "/" + defaultBranch))
                 .setDepth(1);
-        setAuthentication(fetch, projectName, userName, "origin");
+        setAuthentication(fetch, projectName, userName, remoteName);
         fetch.call();
-        setupGitFromRemoteRepo(projectName, defaultBranch, git);
+        setupGitFromRemoteRepo(projectName, remoteName, defaultBranch, git);
         // Unshallow to pull full commit history for the History panel
         FetchCommand unshallow = git.fetch()
-                .setRemote("origin")
+                .setRemote(remoteName)
                 .setUnshallow(true);
-        setAuthentication(unshallow, projectName, userName, "origin");
+        setAuthentication(unshallow, projectName, userName, remoteName);
         unshallow.call();
     }
 
@@ -712,14 +806,15 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
         }
     }
 
-    private void setupGitFromRemoteRepo(String projectName, String defaultBranch, Git git) throws Exception {
+    private void setupGitFromRemoteRepo(String projectName, String remoteName, String defaultBranch,
+                                        Git git) throws Exception {
         try {
             CheckoutCommand checkout = git.checkout()
                     .setName(defaultBranch)
                     .setCreateBranch(true)
                     .setForced(true)
                     .setUpstreamMode(CreateBranchCommand.SetupUpstreamMode.TRACK)
-                    .setStartPoint("origin/" + defaultBranch);
+                    .setStartPoint(remoteName + "/" + defaultBranch);
             checkout.call();
 
             git.clean().setForce(true).call();

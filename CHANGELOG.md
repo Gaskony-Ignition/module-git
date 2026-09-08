@@ -3,6 +3,60 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.12.2] - 2026-09-08
+
+### Fixed
+- **Dropdown selections are saved.** The platform's `SelectInput` spreads its rest
+  props onto a MUI Select, so `onChange` receives MUI's event, not the chosen value.
+  Reading it as a string stored the event object instead, and the save then failed on
+  the gateway with `UnsupportedOperationException: JsonObject` — a 500 naming a Gson
+  type rather than the field at fault. As with the `values` prop, the same mistake was
+  in the Credentials and Projects tabs shipped in 2.11.0.
+- `optString` ignores a non-primitive field instead of throwing, so a wrong-shaped
+  request can no longer produce an opaque 500.
+
+## [2.12.1] - 2026-09-08
+
+### Fixed
+- **Dropdowns render instead of blanking the page.** The platform's `SelectInput`
+  takes its items as `values`, not `options`; with the wrong prop it read `.find` off
+  `undefined` and React unmounted the whole page to "Application Error". This also
+  fixes two paths shipped in 2.11.0 that had the same mistake and were never exercised:
+  choosing a stored secret on the Credentials tab, and picking a credential when
+  cloning from the Projects tab. Both blanked the page as soon as the dropdown
+  appeared.
+
+## [2.12.0] - 2026-09-08
+
+### Added
+- **Automation tab** on the Versioning page — three things that previously needed
+  scripts written on a gateway you could already reach.
+- **Git events.** Every commit, push, pull, checkout, branch, revert and config
+  auto-commit raises an event, successes and failures alike, delivered to a project
+  library function and/or a Gateway Event message handler as a dictionary. Failures
+  carry the reason, because "the nightly push has been failing for a week" is the
+  thing worth knowing. Delivery is asynchronous on a bounded queue: a broken handler
+  cannot slow a commit down, let alone fail one.
+- **Outbound triggers.** A matching event calls a URL, with GitHub's
+  `repository_dispatch` and `workflow_dispatch` as one-click presets. Generic on
+  purpose — the same rule shape serves GitLab, Jenkins, Teams or another gateway.
+  Owner and repo are derived from the repository's own remote, so one rule can serve
+  every project. The token is a stored HTTPS credential referenced by id, never held
+  in the rule and never logged.
+- **Scheduled sync.** The gateway fetches each enabled project repository on a timer
+  and fast-forwards when the tracked branch has moved, then requests a project scan.
+  Polling rather than a GitHub webhook is deliberate: a webhook needs GitHub to reach
+  *into* the gateway, which is not possible on most OT networks. A sync refuses when
+  the working tree has local changes rather than discarding someone's unsaved work,
+  and one repository syncs at a time.
+- **Event log** on the same tab — the last 50 events and what the gateway did with
+  each, which is where a handler that silently does nothing becomes visible.
+
+### Fixed
+- `checkoutRemote` honours the remote it was given. It hardcoded `origin`, so a pull
+  on an unborn repository configured with a differently named remote would silently
+  contact the wrong one.
+
 ## [2.11.1] - 2026-09-08
 
 ### Fixed

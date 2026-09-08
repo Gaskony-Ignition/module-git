@@ -16,6 +16,7 @@ import {
   useRemoveCredentialMutation,
 } from "./GitConfig.service";
 import { errorToast } from "./errors";
+import { selectValue } from "./selectValue";
 
 // Credentials are per Ignition user and are what a project repository authenticates with. They
 // could only be created from the Designer's setup wizard, which puts them behind the thing they
@@ -220,23 +221,23 @@ const Credentials = () => {
               <SelectInput
                 label="Secret provider"
                 value={providerName}
-                options={providerList.map((p) => ({
+                values={providerList.map((p) => ({
                   label: p.name,
                   value: p.name,
                 }))}
-                onChange={(v: string) => {
-                  setProviderName(v);
+                onChange={(e: unknown) => {
+                  setProviderName(selectValue(e));
                   setSecretName("");
                 }}
               />
               <SelectInput
                 label="Secret"
                 value={secretName}
-                options={secrets.map((sname) => ({
+                values={secrets.map((sname) => ({
                   label: sname,
                   value: sname,
                 }))}
-                onChange={(v: string) => setSecretName(v)}
+                onChange={(e: unknown) => setSecretName(selectValue(e))}
               />
             </>
           )}

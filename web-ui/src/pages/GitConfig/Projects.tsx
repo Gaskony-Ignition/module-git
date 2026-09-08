@@ -14,6 +14,7 @@ import {
   useSetProjectRemoteMutation,
 } from "./GitConfig.service";
 import { errorToast } from "./errors";
+import { selectValue } from "./selectValue";
 
 // Which projects are under version control was previously answerable only from the Designer, one
 // project at a time, after opening it. Unversioned projects are listed here too: "not in git" and
@@ -164,11 +165,11 @@ const Projects = () => {
             <SelectInput
               label="Credential"
               value={credId}
-              options={credentials.map((c) => ({
+              values={credentials.map((c) => ({
                 label: `${c.type} — ${c.label}`,
                 value: String(c.id),
               }))}
-              onChange={(v: string) => setCredId(v)}
+              onChange={(e: unknown) => setCredId(selectValue(e))}
             />
           ) : null}
           <div className="gitcfg-cred-actions">

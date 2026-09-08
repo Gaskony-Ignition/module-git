@@ -145,6 +145,67 @@ export interface IgnoreEditReq {
   text?: string;
 }
 
+export interface AutomationSettings {
+  enabled: boolean;
+  eventTypes: string[];
+  handlerProject: string;
+  handlerScript: string;
+  messageProject: string;
+  messageHandler: string;
+}
+export interface TriggerRule {
+  id: number;
+  name: string;
+  enabled: boolean;
+  // Comma-separated on the wire: the gateway stores them as one string per rule.
+  eventTypes: string;
+  outcomes: string;
+  projectFilter: string;
+  branchFilter: string;
+  url: string;
+  method: string;
+  headers: string;
+  bodyTemplate: string;
+  credentialId: number;
+  credentialHeader: string;
+}
+export interface SyncSetting {
+  project: string;
+  enabled: boolean;
+  remoteName: string;
+  branch: string;
+  intervalSeconds: number;
+  ignitionUser: string;
+}
+export interface EventLogEntry {
+  type: string;
+  outcome: string;
+  scope: string;
+  project: string;
+  user: string;
+  branch: string;
+  commit: string;
+  message: string;
+  fileCount: number;
+  timestamp: string;
+  // What the bus did with it — the diagnostic when a handler appears to do nothing.
+  delivery: string;
+}
+export interface AutomationResp {
+  settings: AutomationSettings;
+  allTypes: string[];
+  triggers: TriggerRule[];
+  syncs: SyncSetting[];
+  log: EventLogEntry[];
+  stats: {
+    fired: number;
+    dropped: number;
+    failures: number;
+    queued: number;
+    running: boolean;
+  };
+}
+
 export const gitConfigApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     getStatus: builder.query<StatusResp, void>({
@@ -280,6 +341,56 @@ export const gitConfigApi = baseApi.injectEndpoints({
       query: () => ({ url: `${BASE}/deinit`, method: "POST", body: {} }),
       invalidatesTags: ["status", "history", "remote"],
     }),
+    getAutomation: builder.query<AutomationResp, void>({
+      query: () => `${BASE}/automation`,
+      providesTags: ["automation"],
+    }),
+    saveAutomation: builder.mutation<unknown, AutomationSettings>({
+      query: (body) => ({ url: `${BASE}/automation`, method: "POST", body }),
+      invalidatesTags: ["automation"],
+    }),
+    testAutomation: builder.mutation<unknown, { project?: string }>({
+      query: (body) => ({
+        url: `${BASE}/automation-test`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["automation"],
+    }),
+    clearAutomationLog: builder.mutation<unknown, void>({
+      query: () => ({
+        url: `${BASE}/automation-clear`,
+        method: "POST",
+        body: {},
+      }),
+      invalidatesTags: ["automation"],
+    }),
+    saveTrigger: builder.mutation<
+      { id: number },
+      Omit<TriggerRule, "eventTypes" | "outcomes"> & {
+        eventTypes: string[];
+        outcomes: string[];
+      }
+    >({
+      query: (body) => ({ url: `${BASE}/trigger`, method: "POST", body }),
+      invalidatesTags: ["automation"],
+    }),
+    removeTrigger: builder.mutation<unknown, { id: number }>({
+      query: (body) => ({
+        url: `${BASE}/trigger-remove`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["automation"],
+    }),
+    saveSync: builder.mutation<unknown, SyncSetting>({
+      query: (body) => ({ url: `${BASE}/sync`, method: "POST", body }),
+      invalidatesTags: ["automation", "projects"],
+    }),
+    syncNow: builder.mutation<{ result: string }, { project: string }>({
+      query: (body) => ({ url: `${BASE}/sync-now`, method: "POST", body }),
+      invalidatesTags: ["automation", "projects"],
+    }),
   }),
   overrideExisting: false,
 });
@@ -308,4 +419,12 @@ export const {
   useGetTreeQuery,
   useGetIgnoreQuery,
   useSaveIgnoreMutation,
+  useGetAutomationQuery,
+  useSaveAutomationMutation,
+  useTestAutomationMutation,
+  useClearAutomationLogMutation,
+  useSaveTriggerMutation,
+  useRemoveTriggerMutation,
+  useSaveSyncMutation,
+  useSyncNowMutation,
 } = gitConfigApi;

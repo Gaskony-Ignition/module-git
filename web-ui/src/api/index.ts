@@ -51,6 +51,7 @@ const baseApi = createApi({
     "tree",
     "ignore",
     "projects",
+    "automation",
   ],
   endpoints: () => ({}),
   keepUnusedDataFor: 0,
