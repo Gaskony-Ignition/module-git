@@ -24,7 +24,7 @@ allprojects {
 
 ignitionModule {
     name.set("Git Integration")
-    fileName.set("GitIntegration.modl")
+    fileName.set("GitIntegration-$releaseVersion.modl")
     // The id and the com.operametrix.* packages stay: changing them makes this a different module
     // to the gateway (uninstall/reinstall, config repo re-initialised) and every later merge from
     // upstream would conflict on paths that no longer match. The Beerware notice in license.html
