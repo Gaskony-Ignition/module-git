@@ -3,6 +3,14 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.10.0] - 2026-09-08
+
+### Changed
+- The Changes list and the Project Browser badges refresh when you save, rather
+  than on the next tick of the 15-second poll. Saving is when the change set
+  changes, so waiting on a timer (or pressing refresh) was the wrong default.
+  The poll remains as a backstop.
+
 ## [2.9.0] - 2026-09-08
 
 ### Fixed

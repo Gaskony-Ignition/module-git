@@ -420,6 +420,14 @@ public class DesignerHook extends AbstractDesignerModuleHook {
     @Override
     public void notifyProjectSaveDone(){
         super.notifyProjectSaveDone();
+        // Saving is when the change list changes, so refresh then rather than leaving it to the
+        // 15-second poll. Twice: the first pass catches the common case immediately, and the
+        // gateway can still be writing the last resource as this fires, which the follow-up
+        // covers. Both are cheap — one RPC that feeds the Changes list and the badges together.
+        refreshCommitPanel();
+        Timer settle = new Timer(1200, e -> refreshCommitPanel());
+        settle.setRepeats(false);
+        settle.start();
     }
 
     @Override
