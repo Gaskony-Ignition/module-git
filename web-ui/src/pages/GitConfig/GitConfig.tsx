@@ -14,10 +14,21 @@ import {
 import { errorToast } from "./errors";
 import RemoteSync from "./RemoteSync";
 import HistoryList from "./HistoryList";
+import Projects from "./Projects";
+import Credentials from "./Credentials";
 import ExcludedFiles from "./ExcludedFiles";
 import "./_styles.scss";
 
-type Tab = "history" | "excluded";
+type Tab = "history" | "excluded" | "projects" | "credentials";
+
+// Credentials sit on the far right because they are set up once; Projects answers the question
+// people arrive with, which is whether a given project is in git at all.
+const TABS: [Tab, string][] = [
+  ["history", "History"],
+  ["excluded", "Excluded files"],
+  ["projects", "Projects"],
+  ["credentials", "Credentials"],
+];
 
 const GitConfig = () => {
   const [tab, setTab] = React.useState<Tab>("history");
@@ -38,7 +49,12 @@ const GitConfig = () => {
       return <Loading isLoading={true} />;
     }
 
-    if (!initialized) {
+    // Only the two config-repo tabs depend on the data-dir repository existing. Projects and
+    // Credentials do not, and gating them on it put the credentials someone needs BEFORE setting
+    // anything up behind the setup they cannot do without them.
+    const needsRepo = tab === "history" || tab === "excluded";
+
+    const notInitialised = () => {
       return (
         <div className="gitcfg-blank-wrap">
           <BlankState
@@ -94,30 +110,36 @@ const GitConfig = () => {
           />
         </div>
       );
-    }
+    };
 
-    // Two views of the same repo: what HAS been recorded, and what is allowed to be.
+    // Four views: what HAS been recorded, what is allowed to be, which projects are versioned at
+    // all, and the credentials any of it authenticates with.
     return (
       <>
         <div className="gitcfg-tabs" role="tablist">
-          <button
-            role="tab"
-            aria-selected={tab === "history"}
-            className={tab === "history" ? "is-active" : ""}
-            onClick={() => setTab("history")}
-          >
-            History
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === "excluded"}
-            className={tab === "excluded" ? "is-active" : ""}
-            onClick={() => setTab("excluded")}
-          >
-            Excluded files
-          </button>
+          {TABS.map(([key, label]) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={tab === key}
+              className={tab === key ? "is-active" : ""}
+              onClick={() => setTab(key)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-        {tab === "history" ? <HistoryList /> : <ExcludedFiles />}
+        {needsRepo && !initialized ? (
+          notInitialised()
+        ) : tab === "history" ? (
+          <HistoryList />
+        ) : tab === "excluded" ? (
+          <ExcludedFiles />
+        ) : tab === "projects" ? (
+          <Projects />
+        ) : (
+          <Credentials />
+        )}
       </>
     );
   };

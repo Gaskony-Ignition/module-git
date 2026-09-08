@@ -350,3 +350,103 @@
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
 }
+
+// --- Projects and Credentials tabs -----------------------------------------
+
+.gitcfg-empty {
+  color: #667085;
+  padding: 1rem 0.25rem;
+}
+
+.gitcfg-cred-form {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+
+  h4 {
+    margin: 0;
+  }
+}
+
+.gitcfg-cred-row {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.gitcfg-cred-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.gitcfg-cred-table,
+.gitcfg-proj-table {
+  width: 100%;
+  border-collapse: collapse;
+
+  th {
+    text-align: left;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #667085;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 0.5rem 0.75rem 0.5rem 0;
+  }
+
+  td {
+    // Cells carry no horizontal padding of their own, so a column butts against its neighbour.
+    padding: 0.6rem 0.75rem 0.6rem 0;
+    border-bottom: 1px solid #f0f2f5;
+    vertical-align: middle;
+  }
+}
+
+.gitcfg-cred-del,
+.gitcfg-proj-act {
+  text-align: right;
+  width: 1%;
+  white-space: nowrap;
+  padding-right: 0 !important;
+}
+
+.gitcfg-proj-name {
+  display: block;
+}
+
+.gitcfg-proj-title {
+  display: block;
+  color: #98a2b3;
+  font-size: 11px;
+}
+
+.gitcfg-proj-remote {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  color: #667085;
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitcfg-proj-ok {
+  color: #58a64b;
+}
+
+.gitcfg-proj-dirty {
+  color: #e2a03f;
+}
+
+.gitcfg-proj-off {
+  color: #98a2b3;
+}
+
+.gitcfg-proj-err {
+  color: var(--error);
+}

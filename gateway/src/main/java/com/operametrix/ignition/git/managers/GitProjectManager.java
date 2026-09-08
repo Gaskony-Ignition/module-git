@@ -37,6 +37,84 @@ public class GitProjectManager {
             .registerTypeAdapter(ResourceManifest.class, ResourceManifestSerializer.forProject())
             .create();
 
+    /**
+     * One row of the Versioning page's Projects tab.
+     *
+     * @param versioned whether {@code projects/<name>/.git} exists — the only thing that decides
+     *                  it, since {@code .git/config} owns the repo and its remotes
+     * @param changes   uncommitted paths, or -1 when the count could not be read
+     */
+    public record ProjectStatus(String name, String title, boolean versioned, String branch,
+                                String remoteName, String remoteUrl, int changes, String error) {}
+
+    /**
+     * Every project on the gateway with its git state. Lists UNVERSIONED projects too: the question
+     * the page answers is "is this project in git", and a project missing from a list of repos looks
+     * identical to one nobody has set up yet.
+     *
+     * <p>Degrades per project rather than failing the page — one unreadable repo should not hide the
+     * other nine, so its row carries the error instead.
+     */
+    public static List<ProjectStatus> listProjectStatus() {
+        Path projectsDir = GitManager.getDataFolderPath().resolve("projects");
+        List<ProjectStatus> out = new ArrayList<>();
+        if (!Files.isDirectory(projectsDir)) {
+            return out;
+        }
+        try (var stream = Files.list(projectsDir)) {
+            List<Path> dirs = stream.filter(Files::isDirectory)
+                    .filter(p -> Files.exists(p.resolve("project.json")))
+                    .sorted(Comparator.comparing(p -> p.getFileName().toString(),
+                            String.CASE_INSENSITIVE_ORDER))
+                    .toList();
+            for (Path dir : dirs) {
+                out.add(statusOf(dir));
+            }
+        } catch (IOException e) {
+            logger.error("Error listing projects", e);
+            throw new RuntimeException(e);
+        }
+        return out;
+    }
+
+    private static ProjectStatus statusOf(Path dir) {
+        String name = dir.getFileName().toString();
+        String title = name;
+        try {
+            JsonObject o = RESOURCE_GSON.fromJson(
+                    new String(Files.readAllBytes(dir.resolve("project.json")), StandardCharsets.UTF_8),
+                    JsonObject.class);
+            if (o != null && o.has("title") && !o.get("title").isJsonNull()) {
+                String t = o.get("title").getAsString();
+                if (!t.isBlank()) {
+                    title = t;
+                }
+            }
+        } catch (Exception ignored) {
+            // A project.json we cannot parse is still a project; the folder name will do.
+        }
+        if (!Files.isDirectory(dir.resolve(".git"))) {
+            return new ProjectStatus(name, title, false, null, null, null, 0, null);
+        }
+        try (org.eclipse.jgit.api.Git git = GitManager.getGit(dir)) {
+            String branch = git.getRepository().getBranch();
+            String remoteName = null;
+            String remoteUrl = null;
+            Set<String> remotes = git.getRepository().getRemoteNames();
+            if (!remotes.isEmpty()) {
+                remoteName = remotes.contains("origin") ? "origin" : remotes.iterator().next();
+                remoteUrl = git.getRepository().getConfig().getString("remote", remoteName, "url");
+            }
+            var st = git.status().call();
+            int changes = st.getUntracked().size() + st.getModified().size() + st.getChanged().size()
+                    + st.getAdded().size() + st.getMissing().size() + st.getRemoved().size();
+            return new ProjectStatus(name, title, true, branch, remoteName, remoteUrl, changes, null);
+        } catch (Exception e) {
+            logger.warn("Could not read the git state of project '" + name + "'", e);
+            return new ProjectStatus(name, title, true, null, null, null, -1, e.getMessage());
+        }
+    }
+
     public static void importProject(String projectName) {
         ProjectManager projectManager = getContext().getProjectManager();
         Path projectDir = getProjectFolderPath(projectName);

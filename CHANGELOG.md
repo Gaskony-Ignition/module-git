@@ -3,6 +3,26 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.11.0] - 2026-09-08
+
+### Added
+- **Credentials tab** on the Versioning page. SSH keys and HTTPS credentials could
+  only be created from the Designer's setup wizard, which put them behind the thing
+  they are needed for: you cannot clone a project without a key, and you could not
+  make the key without opening a Designer. The gateway routes already existed and
+  nothing called them.
+- **Projects tab** listing every project on the gateway with its branch, remote and
+  uncommitted count, and whether it is under version control at all. Unversioned
+  projects are listed too — "not in git" and "not on this gateway" are otherwise
+  indistinguishable. A project can be initialised, cloned, or given a remote from
+  here without opening a Designer.
+
+### Fixed
+- The page no longer hides everything behind "config versioning is not initialized".
+  That gate is specific to the History and Excluded files tabs, and applying it to
+  the whole page put the credentials you need BEFORE any setup behind the setup you
+  cannot do without them.
+
 ## [2.10.0] - 2026-09-08
 
 ### Changed

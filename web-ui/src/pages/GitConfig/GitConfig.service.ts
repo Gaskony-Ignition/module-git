@@ -73,6 +73,22 @@ export interface SecretProvider {
 export interface SecretProvidersResp {
   providers: SecretProvider[];
 }
+// A project on this gateway and its git state. Unversioned projects are listed too — the
+// absence is the answer, and a project missing from a list of repos looks like one nobody
+// has set up yet.
+export interface ProjectStatus {
+  name: string;
+  title: string;
+  versioned: boolean;
+  branch?: string | null;
+  remoteName?: string | null;
+  remoteUrl?: string | null;
+  changes: number;
+  error?: string | null;
+}
+export interface ProjectsResp {
+  projects: ProjectStatus[];
+}
 // Add-credential request: each secret is either typed inline or a Secret Provider reference.
 export type AddCredentialReq =
   | { type: "SSH"; name: string; mode: "inline"; key: string }
@@ -190,6 +206,44 @@ export const gitConfigApi = baseApi.injectEndpoints({
       query: (body) => ({ url: `${BASE}/credentials`, method: "POST", body }),
       invalidatesTags: ["credentials"],
     }),
+    removeCredential: builder.mutation<
+      unknown,
+      { type: "SSH" | "HTTPS"; id: number }
+    >({
+      query: (body) => ({
+        url: `${BASE}/credential-remove`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["credentials"],
+    }),
+    getProjects: builder.query<ProjectsResp, void>({
+      query: () => `${BASE}/projects`,
+      providesTags: ["projects"],
+    }),
+    initProject: builder.mutation<
+      unknown,
+      {
+        project: string;
+        url?: string;
+        sshKeyId?: number;
+        httpsCredentialId?: number;
+      }
+    >({
+      query: (body) => ({ url: `${BASE}/project-init`, method: "POST", body }),
+      invalidatesTags: ["projects"],
+    }),
+    setProjectRemote: builder.mutation<
+      unknown,
+      { project: string; name?: string; url: string }
+    >({
+      query: (body) => ({
+        url: `${BASE}/project-remote`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["projects"],
+    }),
     restore: builder.mutation<unknown, { hash: string }>({
       query: (body) => ({ url: `${BASE}/restore`, method: "POST", body }),
       invalidatesTags: ["status", "history"],
@@ -243,6 +297,10 @@ export const {
   useTestRemoteMutation,
   usePushMutation,
   useAddCredentialMutation,
+  useRemoveCredentialMutation,
+  useGetProjectsQuery,
+  useInitProjectMutation,
+  useSetProjectRemoteMutation,
   useRestoreMutation,
   useInitMutation,
   useDeinitMutation,

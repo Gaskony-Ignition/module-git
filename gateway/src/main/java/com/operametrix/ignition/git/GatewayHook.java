@@ -28,6 +28,7 @@ import com.inductiveautomation.ignition.gateway.model.GatewayContext;
 import com.inductiveautomation.ignition.gateway.rpc.GatewayRpcImplementation;
 import com.inductiveautomation.ignition.gateway.web.session.WebUiSession;
 import com.inductiveautomation.ignition.gateway.web.systemjs.SystemJsModule;
+import com.operametrix.ignition.git.managers.GitProjectManager;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -236,6 +237,22 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         routes.newRoute("/credentials").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.WRITE)
                 .handler(this::handleAddCredential).mount();
+
+        routes.newRoute("/credential-remove").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleRemoveCredential).mount();
+
+        routes.newRoute("/projects").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.READ).nocache()
+                .handler(this::handleProjects).mount();
+
+        routes.newRoute("/project-init").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleProjectInit).mount();
+
+        routes.newRoute("/project-remote").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleProjectRemote).mount();
 
         routes.newRoute("/restore").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.WRITE)
@@ -854,4 +871,116 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         }
         return out;
     }
+
+    /**
+     * Delete a stored credential. Only the acting user's own credentials can be removed — the
+     * records are per-user and a gateway admin editing someone else's would break their remotes
+     * without telling them.
+     */
+    private Object handleRemoveCredential(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            String type = optString(body, "type");
+            long id = body.get("id").getAsLong();
+            String actor = req.getActor();
+            if ("SSH".equalsIgnoreCase(type)) {
+                GitUserSshKeyRecord record = GitUserSshKeyRecord.findByIdAndUser(id, actor);
+                if (record == null) {
+                    throw new RuntimeException("No such SSH key for this user.");
+                }
+                record.delete();
+            } else if ("HTTPS".equalsIgnoreCase(type)) {
+                GitUserHttpsCredentialRecord record =
+                        GitUserHttpsCredentialRecord.findByIdAndUser(id, actor);
+                if (record == null) {
+                    throw new RuntimeException("No such credential for this user.");
+                }
+                record.delete();
+            } else {
+                throw new RuntimeException("Unknown credential type: " + type);
+            }
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", true);
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    /** Every project on the gateway with its git state — see GitProjectManager#listProjectStatus. */
+    private Object handleProjects(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonArray arr = new JsonArray();
+            for (GitProjectManager.ProjectStatus p : GitProjectManager.listProjectStatus()) {
+                JsonObject o = new JsonObject();
+                o.addProperty("name", p.name());
+                o.addProperty("title", p.title());
+                o.addProperty("versioned", p.versioned());
+                o.addProperty("branch", p.branch());
+                o.addProperty("remoteName", p.remoteName());
+                o.addProperty("remoteUrl", p.remoteUrl());
+                o.addProperty("changes", p.changes());
+                o.addProperty("error", p.error());
+                arr.add(o);
+            }
+            JsonObject out = new JsonObject();
+            out.add("projects", arr);
+            return out.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    /**
+     * Put a project under version control: clone when a URL is given, otherwise initialise a local
+     * repository. The same two paths the Designer's setup wizard offers, so a gateway admin can do
+     * it before anyone opens a Designer.
+     */
+    private Object handleProjectInit(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            String project = optString(body, "project");
+            if (project == null || project.isBlank()) {
+                throw new RuntimeException("A project name is required.");
+            }
+            String url = optString(body, "url");
+            String actor = req.getActor();
+            boolean ok;
+            if (url == null || url.isBlank()) {
+                ok = scriptModule.initializeLocalProject(project, actor);
+            } else {
+                long sshKeyId = body.has("sshKeyId") && !body.get("sshKeyId").isJsonNull()
+                        ? body.get("sshKeyId").getAsLong() : 0L;
+                long httpsId = body.has("httpsCredentialId") && !body.get("httpsCredentialId").isJsonNull()
+                        ? body.get("httpsCredentialId").getAsLong() : 0L;
+                ok = scriptModule.initializeProject(project, url.trim(), actor, sshKeyId, httpsId);
+            }
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", ok);
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    /** Attach or replace a project's remote, with the credential it should authenticate with. */
+    private Object handleProjectRemote(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            String project = optString(body, "project");
+            String name = optString(body, "name");
+            String url = optString(body, "url");
+            if (project == null || project.isBlank() || url == null || url.isBlank()) {
+                throw new RuntimeException("A project and a remote URL are required.");
+            }
+            String remoteName = (name == null || name.isBlank()) ? "origin" : name.trim();
+            boolean ok = scriptModule.addRemote(project, remoteName, url.trim(), req.getActor());
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", ok);
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
 }

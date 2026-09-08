@@ -50,6 +50,7 @@ const baseApi = createApi({
     "secretProviders",
     "tree",
     "ignore",
+    "projects",
   ],
   endpoints: () => ({}),
   keepUnusedDataFor: 0,
