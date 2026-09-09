@@ -298,6 +298,10 @@ public class GatewayHook extends AbstractGatewayModuleHook {
                 .requirePermission(PermissionType.WRITE)
                 .handler(this::handleProjectImages).mount();
 
+        routes.newRoute("/project-snapshot-images").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleSnapshotImages).mount();
+
         routes.newRoute("/webhook-config").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.READ).nocache()
                 .handler(this::handleGetWebhook).mount();
@@ -1037,6 +1041,30 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         }
     }
 
+    /**
+     * Writes the project's configured image folder into its repository.
+     *
+     * <p>The same snapshot the Designer's Commit panel offers. It belongs here too because this is
+     * where the folder is chosen — configuring a prefix on the gateway and then having to open a
+     * Designer to act on it is a split nobody would design on purpose.
+     */
+    private Object handleSnapshotImages(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            String project = optString(body, "project");
+            if (project == null || project.isBlank()) {
+                throw new RuntimeException("A project name is required.");
+            }
+            boolean ok = scriptModule.snapshotImages(project.trim());
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", ok);
+            o.addProperty("imagePrefix", GitProjectsConfigRecord.imagePrefixFor(project.trim()));
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
     /** The webhook settings the Automation tab renders. The secret is never returned. */
     private Object handleGetWebhook(RequestContext req, HttpServletResponse resp) {
         try {
@@ -1084,25 +1112,13 @@ public class GatewayHook extends AbstractGatewayModuleHook {
      */
     private JsonArray imageStoreFolders() {
         JsonArray out = new JsonArray();
-        try {
-            java.util.TreeSet<String> names = new java.util.TreeSet<>();
-            for (var image : context.getImageManager().getImages("")) {
-                String path = image.path().getPath().toString();
-                int slash = path.indexOf('/');
-                if (slash > 0) {
-                    names.add(path.substring(0, slash));
-                }
-            }
-            names.forEach(out::add);
-        } catch (Exception e) {
-            logger.warn("Unable to list the image store; the folder list will be empty.", e);
-        }
+        com.operametrix.ignition.git.managers.GitImageManager.listFolders().forEach(out::add);
         return out;
     }
 
+
     /**
-     * Set which image-store folder a project versions. Empty means none, which is the default —
-     * before this existed every project exported the whole store into its own repository.
+     * Set which image-store folder a project versions. Empty means none, which is the default.
      */
     private Object handleProjectImages(RequestContext req, HttpServletResponse resp) {
         try {

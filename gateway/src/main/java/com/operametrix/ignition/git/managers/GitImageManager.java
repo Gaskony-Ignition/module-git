@@ -128,10 +128,13 @@ public class GitImageManager {
      * Write the images this project versions into {@code <project>/images}.
      *
      * <p>{@code prefix} is the folder in the gateway image store the project owns, and it is
-     * opt-in: an empty prefix versions nothing and clears the folder. Every project used to
-     * export the ENTIRE store, so each repository carried its own copy of the platform's ~700
-     * Builtin icons — a large, permanently-churning diff in every project that nobody had asked
-     * to version images at all.
+     * opt-in: an empty prefix versions nothing and clears the folder.
+     *
+     * <p><b>The store is a tree and {@code getImages} lists one level of it.</b> A folder comes
+     * back as an entry in its own right, with a null format and no bytes. The previous version
+     * iterated the root listing and wrote each entry straight to disk, so on 8.3 it produced a
+     * single empty file named after the top folder and exported no image at all — measured on
+     * 8.3.8, where the whole root listing is the one entry {@code Builtin}. Hence the walk.
      */
     public static void exportImages(Path projectFolderPath, String prefix) {
         Path imageFolderPath = projectFolderPath.resolve("images");
@@ -142,6 +145,81 @@ public class GitImageManager {
             logger.error(e.toString(), e);
         }
 
+        String scope = normalise(prefix);
+        if (scope.isEmpty()) {
+            logger.debug("No image folder configured for this project; exporting no images.");
+            return;
+        }
+
+        int written = walk(getContext().getImageManager(), scope, imageFolderPath, 0, new int[] {0});
+        logger.info("Exported " + written + " image(s) under '" + scope + "'.");
+    }
+
+    /** Depth cap: a store nested deeper than this is a fault, not a layout. */
+    private static final int MAX_DEPTH = 12;
+
+    /** Total entries visited, so a cycle or a pathological store cannot hang a snapshot. */
+    private static final int MAX_ENTRIES = 20000;
+
+    private static int walk(ImageManager manager, String path, Path targetRoot, int depth, int[] visited) {
+        if (depth > MAX_DEPTH || visited[0] > MAX_ENTRIES) {
+            return 0;
+        }
+        int written = 0;
+        for (ImageResource entry : manager.getImages(path)) {
+            visited[0]++;
+            String relPath = entry.path().getPath().toString();
+            if (relPath.equals(path)) {
+                continue;                       // the folder listing includes itself
+            }
+            if (entry.format() == null) {
+                written += walk(manager, relPath, targetRoot, depth + 1, visited);
+                continue;
+            }
+            Path target = targetRoot.resolve(relPath);
+            try {
+                if (target.getParent() != null) {
+                    Files.createDirectories(target.getParent());
+                }
+                Files.write(target, entry.data().getBytes());
+                written++;
+            } catch (IOException e) {
+                logger.error("Unable to export image '" + relPath + "'", e);
+            }
+        }
+        return written;
+    }
+
+    /** Folders in the store, so a prefix can be chosen rather than typed from memory. */
+    public static java.util.List<String> listFolders() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try {
+            collectFolders(getContext().getImageManager(), "", out, 0);
+        } catch (Exception e) {
+            logger.warn("Unable to list the image store.", e);
+        }
+        return out;
+    }
+
+    /** Three levels is enough to name a project's own folder without listing every icon set. */
+    private static final int FOLDER_DEPTH = 3;
+
+    private static void collectFolders(ImageManager manager, String path, java.util.List<String> out, int depth) {
+        if (depth >= FOLDER_DEPTH || out.size() > 500) {
+            return;
+        }
+        for (ImageResource entry : manager.getImages(path)) {
+            String relPath = entry.path().getPath().toString();
+            if (relPath.equals(path) || entry.format() != null) {
+                continue;
+            }
+            out.add(relPath);
+            collectFolders(manager, relPath, out, depth + 1);
+        }
+    }
+
+    /** Trims a configured prefix to a bare store path. */
+    private static String normalise(String prefix) {
         String scope = prefix == null ? "" : prefix.trim();
         while (scope.startsWith("/")) {
             scope = scope.substring(1);
@@ -149,32 +227,7 @@ public class GitImageManager {
         while (scope.endsWith("/")) {
             scope = scope.substring(0, scope.length() - 1);
         }
-        if (scope.isEmpty()) {
-            logger.debug("No image folder configured for this project; exporting no images.");
-            return;
-        }
-
-        ImageManager imageManager = getContext().getImageManager();
-        int written = 0;
-        for (ImageResource image : imageManager.getImages("")) {
-            String relPath = image.path().getPath().toString();
-            // Match the folder itself and everything under it, never a sibling whose name merely
-            // starts with the same characters ("Plant" must not pick up "PlantRoom").
-            if (!relPath.equals(scope) && !relPath.startsWith(scope + "/")) {
-                continue;
-            }
-            Path target = imageFolderPath.resolve(relPath);
-            try {
-                if (target.getParent() != null) {
-                    Files.createDirectories(target.getParent());
-                }
-                Files.write(target, image.data().getBytes());
-                written++;
-            } catch (IOException e) {
-                logger.error("Unable to export image '" + relPath + "'", e);
-            }
-        }
-        logger.info("Exported " + written + " image(s) under '" + scope + "'.");
+        return scope;
     }
 }
 

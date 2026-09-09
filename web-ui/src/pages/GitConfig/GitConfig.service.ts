@@ -320,6 +320,14 @@ export const gitConfigApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ["projects"],
     }),
+    snapshotProjectImages: builder.mutation<unknown, { project: string }>({
+      query: (body) => ({
+        url: `${BASE}/project-snapshot-images`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["projects"],
+    }),
     getWebhook: builder.query<WebhookSettings, void>({
       query: () => `${BASE}/webhook-config`,
       providesTags: ["webhook"],
@@ -459,6 +467,7 @@ export const {
   useInitProjectMutation,
   useSetProjectRemoteMutation,
   useSetProjectImagesMutation,
+  useSnapshotProjectImagesMutation,
   useGetWebhookQuery,
   useSaveWebhookMutation,
   useRestoreMutation,

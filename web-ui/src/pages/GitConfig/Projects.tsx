@@ -12,6 +12,7 @@ import {
   useGetProjectsQuery,
   useInitProjectMutation,
   useSetProjectImagesMutation,
+  useSnapshotProjectImagesMutation,
   useSetProjectRemoteMutation,
 } from "./GitConfig.service";
 import { errorToast } from "./errors";
@@ -28,6 +29,8 @@ const Projects = () => {
     useSetProjectRemoteMutation();
   const [setImages, { isLoading: settingImages }] =
     useSetProjectImagesMutation();
+  const [snapshotImages, { isLoading: snapshotting }] =
+    useSnapshotProjectImagesMutation();
   const toasts = useToastNotifications();
 
   const [target, setTarget] = React.useState<ProjectStatus | null>(null);
@@ -198,6 +201,28 @@ const Projects = () => {
                 ]}
                 onChange={(e: unknown) => setImagePrefix(selectValue(e))}
               />
+              {target.imagePrefix ? (
+                <div className="gitcfg-cred-actions">
+                  <Button
+                    colorClass="secondary"
+                    disabled={snapshotting}
+                    onClick={() =>
+                      snapshotImages({ project: target.name })
+                        .unwrap()
+                        .then(() =>
+                          toasts.notifySuccess(
+                            `Wrote ${target.imagePrefix} into ${target.name}`
+                          )
+                        )
+                        .catch(
+                          errorToast(toasts, "Could not snapshot the images")
+                        )
+                    }
+                  >
+                    {snapshotting ? "Writing…" : "Snapshot images now"}
+                  </Button>
+                </div>
+              ) : null}
               <p className="gitcfg-hint">
                 The image store belongs to the gateway, not to any one project.
                 Versioning a folder here exports only that folder, so two

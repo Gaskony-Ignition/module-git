@@ -30,14 +30,27 @@ upstream's; everything below is this fork.
   Jython as a nested dict and an outbound trigger template as `${details.conclusion}`.
 
 ### Changed
-- **A project versions one image folder, opt in.** Every project exported the entire gateway image
-  store into its own repository, so each repo carried a copy of the platform's ~700 Builtin icons
-  and churned them on every snapshot. A project now names the single folder it versions and
-  exports only that; the default is empty, meaning it exports no images at all. Existing projects
-  take the empty default, so nothing exports until someone asks for it.
+- **A project versions one named image folder, and the export actually works.** Two things were
+  wrong here, and the second was only found by measuring the store.
+
+  `exportImages` iterated `getImages("")` and wrote every entry straight to disk. But the 8.3 image
+  store is a **tree**, and `getImages` lists one level of it, returning folders as entries with a
+  null format and no bytes. On this gateway the entire root listing is the single folder entry
+  `Builtin` — so the export wrote one empty file called `images/Builtin` and exported no image at
+  all. It now walks the tree, with a depth and entry cap so a malformed store cannot hang a
+  snapshot.
+
+  On top of that, exporting was all-or-nothing across a gateway-wide resource. A project now names
+  the one folder it versions (`Builtin/icons/16`, say) and exports only that; the default is empty,
+  meaning it exports no images. Existing projects take the empty default.
 
   Import is unchanged and still merges, so narrowing or clearing a prefix never deletes anything
   from a gateway.
+
+- **Images can be snapshotted from the gateway.** The Projects tab is where the folder is now
+  chosen, so it is also where you can write it into the repository — configuring a prefix on the
+  gateway and then having to open a Designer to act on it is a split nobody would design on
+  purpose. The Designer's Commit panel button is unchanged.
 
 ### Fixed
 - **One non-ASCII character stopped an event being delivered at all.** `Py.newString` rejects any

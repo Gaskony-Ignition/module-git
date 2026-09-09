@@ -24,9 +24,9 @@ public class GitProjectsConfigRecord {
      *
      * <p>{@code imagePrefix} names the folder in the gateway image store that this project
      * versions. It is opt-in and defaults to empty, which means the project exports no images
-     * at all. Before it existed, every project exported the ENTIRE store — so every repository
-     * carried a copy of the platform's ~700 Builtin icons. Resources persisted before this
-     * field was added decode it as null, hence {@link #imagePrefixOrEmpty()}.
+     * at all. Before it existed, export was all-or-nothing across a resource that belongs to the
+     * gateway rather than to any project. Resources persisted before this field was added decode
+     * it as null, hence {@link #imagePrefixOrEmpty()}.
      */
     public record Config(long id, String projectName, String imagePrefix) {
         public String imagePrefixOrEmpty() {
