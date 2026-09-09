@@ -576,3 +576,27 @@
   color: #667085;
   white-space: nowrap;
 }
+
+.gitcfg-auto-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.gitcfg-auto-label {
+  color: #667085;
+  font-size: 0.8125rem;
+}
+
+// Display, not a field: the URL is derived from the mount path and there is nothing to edit.
+.gitcfg-auto-url {
+  background: #f4f5f7;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8125rem;
+  overflow-x: auto;
+  padding: 0.4rem 0.6rem;
+  white-space: nowrap;
+}

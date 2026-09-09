@@ -52,6 +52,7 @@ const baseApi = createApi({
     "ignore",
     "projects",
     "automation",
+    "webhook",
   ],
   endpoints: () => ({}),
   keepUnusedDataFor: 0,

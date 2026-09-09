@@ -3,6 +3,63 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.13.0] - 2026-09-09
+
+### Added
+- **Inbound GitHub webhooks.** A repository can now post to the gateway instead of the gateway
+  polling it. Every accepted delivery raises a `webhook` git event carrying the GitHub event
+  name, the repository, the branch and the sender, so a Jython handler can act on any event type
+  without a module upgrade. The event types named in the settings additionally fast-forward the
+  matching project, using that project's Scheduled sync configuration for its credential and
+  branch — so a schedule can be turned off and the webhook still drives the pull.
+
+  `push` and `workflow_run` are the two the gateway understands by itself. `workflow_run` carries
+  the run's name, status, conclusion and URL in `details`, which closes the loop with the outbound
+  triggers: the gateway pushes, the Action runs, and the gateway hears how it went.
+
+  This route is the only one in the module with no permission check and no CSRF token, because
+  GitHub can present neither. It authenticates each request itself: HMAC-SHA256 over the raw body
+  compared in constant time, replay rejection by delivery id, a 2 MB body cap, and a 404 to
+  everyone until a secret is configured. The secret is stored encrypted and never returned to the
+  browser.
+
+  Scheduled sync remains the reliable path. A gateway GitHub cannot reach never receives a
+  delivery, which is why polling was built first and stays the default.
+
+- **Events carry a `details` dictionary** for anything without a column of its own. It reaches
+  Jython as a nested dict and an outbound trigger template as `${details.conclusion}`.
+
+### Changed
+- **A project versions one image folder, opt in.** Every project exported the entire gateway image
+  store into its own repository, so each repo carried a copy of the platform's ~700 Builtin icons
+  and churned them on every snapshot. A project now names the single folder it versions and
+  exports only that; the default is empty, meaning it exports no images at all. Existing projects
+  take the empty default, so nothing exports until someone asks for it.
+
+  Import is unchanged and still merges, so narrowing or clearing a prefix never deletes anything
+  from a gateway.
+
+### Fixed
+- **One non-ASCII character stopped an event being delivered at all.** `Py.newString` rejects any
+  character above 0xFF, so a commit message carrying an accented name, a curly quote pasted from a
+  document, or an em dash threw while the Jython payload was being built — and the event reached
+  neither the script handler nor the outbound trigger. Strings now go through
+  `Py.newStringOrUnicode`. Found by measurement: a gateway-generated message containing an em dash
+  did exactly this.
+- **A failure in one delivery path no longer takes the other down.** Script delivery and outbound
+  triggers ran in one unguarded block, so a payload Jython refused to build meant the trigger never
+  fired either, and the event log named only the first failure. Each path is now isolated and
+  reports its own outcome.
+- **`${…}` placeholders accept dots**, so the new `details` map is reachable from a trigger body as
+  `${details.conclusion}`. The pattern matched letters only, and an unmatched placeholder is left
+  as literal text — so a template referring to one silently posted the placeholder itself.
+
+- Nothing else in the module — but `docs/TROUBLESHOOTING.md` now records why a Designer vanishes on
+  macOS during a pull. It is [JDK-8372757](https://bugs.openjdk.org/browse/JDK-8372757), a
+  regression from JDK-8341311 present in JDK 17.0.17–17.0.20 and fixed in 17.0.21, and it needs a
+  macOS accessibility client to be running. A pull is implicated only because it reliably supplies
+  the garbage collection the reproduction calls for.
+
 ## [2.12.6] - 2026-09-09
 
 ### Changed

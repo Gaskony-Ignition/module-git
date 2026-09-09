@@ -165,7 +165,7 @@ GitHub involvement at all — including against a local bare repo or a self-host
 GitLab. Interval configurable, default 5 minutes. The cost is latency and a
 fetch every interval, both of which are nothing.
 
-**3b. Webhook (optimisation, for gateways that are actually reachable).**
+**3b. Webhook (BUILT in 2.13.0 — see the note at the end of this document).**
 Same pull logic, triggered by a POST instead of a timer. Worth building only
 once polling works, because it is the same action with a harder front door.
 
@@ -231,3 +231,38 @@ GitHub can reach is actually in scope.
   push already. Should it also poll and pull? Restoring gateway configuration
   from a remote automatically is a much larger blast radius than a project, and
   the current design says no.
+
+
+---
+
+## 3b as built (2.13.0)
+
+Built after all, on the reasoning that a gateway behind a reverse proxy or on a
+reachable network should not have to wait out a poll interval, and that
+`workflow_run` has no polling equivalent at all — there is no branch movement to
+notice when a build fails.
+
+The receiver dispatches on `X-GitHub-Event` rather than doing one fixed thing.
+Every accepted delivery raises a `webhook` git event carrying the GitHub event
+name, so a type the gateway has no built-in behaviour for still reaches a Jython
+handler; only the types named in the settings additionally fast-forward the
+project. `push` and `workflow_run` are the two the gateway acts on itself.
+`release` and `pull_request` were skipped deliberately: `release` is `push` for
+repositories that tag, and these do not, while `pull_request` is notification
+only. Both still reach a script.
+
+A webhook-driven pull reuses the project's Scheduled sync configuration for its
+credential and branch. That is not a shortcut — sync is unattended either way,
+and inventing a second place to name which gateway user's credentials get spent
+would be one more thing to get wrong.
+
+The security model is the one this document specified, unchanged: HMAC-SHA256
+over the raw request bytes compared in constant time, fail-closed to a 404 until
+a secret is configured, replay rejection by `X-GitHub-Delivery`, a body cap, and
+single-flight per project inherited from the scheduler. The route mounts with
+`AccessControlStrategy.OPEN_ROUTE`, which is what makes it reachable at all:
+`requirePermission` installs the strategy that demands `X-CSRF-Token`, and
+GitHub has no session to take one from.
+
+Scheduled sync stays the default and the recommendation. A gateway GitHub cannot
+open a connection to receives no deliveries, and that is most of them.

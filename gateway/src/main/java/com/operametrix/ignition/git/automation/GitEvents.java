@@ -124,16 +124,29 @@ public final class GitEvents {
     private static void deliver(GitEvent event) {
         List<String> notes = new ArrayList<>();
 
+        // The two paths are isolated from each other. They were not, and a payload that Jython
+        // refused to build meant the outbound trigger never ran either — one failure, two
+        // features down, and the log named only the first.
         GitAutomationRecord cfg = GitAutomationRecord.get();
-        if (cfg.isEnabled() && cfg.wants(event.type())) {
-            notes.addAll(ScriptDelivery.deliver(event, cfg));
-        } else if (!cfg.isEnabled()) {
-            notes.add("scripts off");
-        } else {
-            notes.add("type not selected");
+        try {
+            if (cfg.isEnabled() && cfg.wants(event.type())) {
+                notes.addAll(ScriptDelivery.deliver(event, cfg));
+            } else if (!cfg.isEnabled()) {
+                notes.add("scripts off");
+            } else {
+                notes.add("type not selected");
+            }
+        } catch (Throwable t) {
+            logger.error("Git event script delivery failed for a {} event.", event.type(), t);
+            notes.add("script delivery error: " + reason(t));
         }
 
-        notes.addAll(TriggerDelivery.deliver(event));
+        try {
+            notes.addAll(TriggerDelivery.deliver(event));
+        } catch (Throwable t) {
+            logger.error("Git event trigger delivery failed for a {} event.", event.type(), t);
+            notes.add("trigger delivery error: " + reason(t));
+        }
 
         record(event, String.join("; ", notes));
     }

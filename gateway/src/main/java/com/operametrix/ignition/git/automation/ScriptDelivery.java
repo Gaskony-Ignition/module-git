@@ -113,19 +113,38 @@ final class ScriptDelivery {
     private static PyDictionary toPyDict(GitEvent event) {
         PyDictionary dict = new PyDictionary();
         for (Map.Entry<String, Object> entry : event.toMap().entrySet()) {
-            dict.__setitem__(Py.newString(entry.getKey()), toPy(entry.getValue()));
+            dict.__setitem__(py(entry.getKey()), toPy(entry.getValue()));
         }
         return dict;
     }
 
     private static PyObject toPy(Object value) {
-        if (value instanceof List<?> list) {
-            PyList out = new PyList();
-            for (Object item : list) {
-                out.append(Py.newString(String.valueOf(item)));
+        if (value instanceof Map<?, ?> map) {
+            PyDictionary out = new PyDictionary();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                out.__setitem__(py(String.valueOf(entry.getKey())), toPy(entry.getValue()));
             }
             return out;
         }
-        return Py.newString(String.valueOf(value));
+        if (value instanceof List<?> list) {
+            PyList out = new PyList();
+            for (Object item : list) {
+                out.append(py(String.valueOf(item)));
+            }
+            return out;
+        }
+        return py(String.valueOf(value));
+    }
+
+    /**
+     * A Jython string that tolerates non-ASCII.
+     *
+     * <p>{@code Py.newString} throws on any character above 0xFF — so one accented name in a
+     * commit message, or a curly quote pasted from a document, killed delivery of the whole
+     * event, script and outbound trigger alike. Measured, not theorised: an em dash in a
+     * gateway-generated message did exactly that.
+     */
+    private static PyObject py(String value) {
+        return Py.newStringOrUnicode(value);
     }
 }

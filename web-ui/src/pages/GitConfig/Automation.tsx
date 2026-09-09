@@ -17,6 +17,8 @@ import {
   useRemoveTriggerMutation,
   useSaveAutomationMutation,
   useSaveSyncMutation,
+  useGetWebhookQuery,
+  useSaveWebhookMutation,
   useSaveTriggerMutation,
   useSyncNowMutation,
   useTestAutomationMutation,
@@ -27,7 +29,7 @@ import { selectValue } from "./selectValue";
 // Three things that were previously only possible by editing scripts on a gateway you could
 // already reach: react to git activity in Jython, call out to CI when the gateway pushes, and
 // bring a merged branch down without anyone opening a Designer.
-type Section = "delivery" | "triggers" | "sync";
+type Section = "delivery" | "triggers" | "sync" | "webhook";
 
 const PRESETS: Record<string, Partial<TriggerRule>> = {
   "GitHub — repository_dispatch": {
@@ -114,11 +116,32 @@ const Automation = () => {
   const [removeTrigger] = useRemoveTriggerMutation();
   const [saveSync, { isLoading: savingSync }] = useSaveSyncMutation();
   const [syncNow, { isLoading: syncing }] = useSyncNowMutation();
+  const { data: webhook } = useGetWebhookQuery();
+  const [saveWebhook, { isLoading: savingWebhook }] = useSaveWebhookMutation();
   const toasts = useToastNotifications();
 
   const [section, setSection] = React.useState<Section>("delivery");
   const [draft, setDraft] = React.useState<TriggerRule | null>(null);
   const [syncDraft, setSyncDraft] = React.useState<SyncSetting | null>(null);
+
+  // Webhook form. The secret is write-only, so the field starts empty even when one is stored
+  // and an empty field on save means "leave the stored secret alone".
+  const [hook, setHook] = React.useState({
+    enabled: false,
+    syncEvents: "push",
+    secret: "",
+  });
+  const hookSeeded = React.useRef(false);
+  React.useEffect(() => {
+    if (webhook && !hookSeeded.current) {
+      hookSeeded.current = true;
+      setHook({
+        enabled: webhook.enabled,
+        syncEvents: webhook.syncEvents,
+        secret: "",
+      });
+    }
+  }, [webhook]);
 
   // Local copy of the settings form, seeded once the gateway answers. Editing must not be
   // stamped on by the 10-second poll mid-keystroke.
@@ -240,6 +263,7 @@ const Automation = () => {
             ["delivery", "Event delivery"],
             ["triggers", "Outbound triggers"],
             ["sync", "Scheduled sync"],
+            ["webhook", "Webhook"],
           ] as [Section, string][]
         ).map(([key, label]) => (
           <button
@@ -699,6 +723,97 @@ const Automation = () => {
             </div>
           ) : null}
         </>
+      ) : null}
+
+      {section === "webhook" ? (
+        <div className="gitcfg-cred-form">
+          <p className="gitcfg-auto-hint">
+            GitHub posts here when something happens in the repository. Every
+            accepted delivery raises a <code>webhook</code> git event, so a
+            Jython handler can act on any event type without a module upgrade;
+            the types listed below additionally fast-forward the matching
+            project. Scheduled sync stays the reliable path — a gateway GitHub
+            cannot reach will never receive a delivery.
+          </p>
+
+          <label className="gitcfg-check">
+            <input
+              type="checkbox"
+              checked={hook.enabled}
+              onChange={(e) => setHook({ ...hook, enabled: e.target.checked })}
+            />
+            <span>Accept inbound webhook deliveries</span>
+          </label>
+
+          <div className="gitcfg-auto-field">
+            <span className="gitcfg-auto-label">
+              Payload URL — set this in the repository&apos;s webhook settings
+            </span>
+            <code className="gitcfg-auto-url">
+              {webhook ? `${window.location.origin}${webhook.url}` : "…"}
+            </code>
+          </div>
+
+          <TextInput
+            label={
+              webhook?.hasSecret
+                ? "Secret — stored; type a new one to replace it"
+                : "Secret — the same value you paste into GitHub"
+            }
+            type="password"
+            placeholder={webhook?.hasSecret ? "unchanged" : ""}
+            value={hook.secret}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setHook({ ...hook, secret: e.target.value })
+            }
+          />
+          <p className="gitcfg-auto-hint">
+            The signature over this secret is the only thing authenticating a
+            delivery — the route carries no session and no permission check,
+            because GitHub can present neither. Until a secret is set the route
+            answers 404 to everyone.
+          </p>
+
+          <TextInput
+            label="Event types that pull the project — comma separated"
+            placeholder="push"
+            value={hook.syncEvents}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setHook({ ...hook, syncEvents: e.target.value })
+            }
+          />
+          <p className="gitcfg-auto-hint">
+            Acted on by the gateway itself:{" "}
+            {(webhook?.knownEvents ?? []).join(", ") || "push, workflow_run"}. A
+            pull needs the project to have a Scheduled sync configuration, which
+            is where its credential and branch come from — disable the schedule
+            and the webhook still drives it.
+          </p>
+
+          <div className="gitcfg-cred-actions">
+            <Button
+              colorClass="primary"
+              disabled={savingWebhook}
+              onClick={() => {
+                saveWebhook({
+                  enabled: hook.enabled,
+                  syncEvents: hook.syncEvents,
+                  secret: hook.secret || undefined,
+                })
+                  .unwrap()
+                  .then(() => {
+                    setHook({ ...hook, secret: "" });
+                    toasts.notifySuccess("Webhook settings saved");
+                  })
+                  .catch(
+                    errorToast(toasts, "Could not save the webhook settings")
+                  );
+              }}
+            >
+              {savingWebhook ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
       ) : null}
 
       <div className="gitcfg-auto-log">

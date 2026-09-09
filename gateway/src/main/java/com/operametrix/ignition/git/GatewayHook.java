@@ -7,6 +7,8 @@ import com.operametrix.ignition.git.records.GitAutomationRecord;
 import com.operametrix.ignition.git.records.GitConfigRemoteRecord;
 import com.operametrix.ignition.git.records.GitProjectsConfigRecord;
 import com.operametrix.ignition.git.records.GitSyncRecord;
+import com.operametrix.ignition.git.records.GitWebhookRecord;
+import com.operametrix.ignition.git.automation.WebhookReceiver;
 import com.operametrix.ignition.git.records.GitTriggerRecord;
 import com.operametrix.ignition.git.records.GitRemoteCredentialsRecord;
 import com.operametrix.ignition.git.records.GitReposUsersRecord;
@@ -21,6 +23,7 @@ import com.inductiveautomation.ignition.common.gson.JsonElement;
 import com.inductiveautomation.ignition.common.gson.JsonObject;
 import com.inductiveautomation.ignition.common.licensing.LicenseState;
 import com.inductiveautomation.ignition.gateway.config.ResourceTypeMetaRegistry;
+import com.inductiveautomation.ignition.gateway.dataroutes.AccessControlStrategy;
 import com.inductiveautomation.ignition.gateway.secrets.ManagedSecretProvider;
 import com.inductiveautomation.ignition.gateway.secrets.Plaintext;
 import com.inductiveautomation.ignition.gateway.secrets.Secret;
@@ -63,6 +66,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     private GitAutomationRecord.Handler automationHandler;
     private GitTriggerRecord.Handler triggerHandler;
     private GitSyncRecord.Handler syncHandler;
+    private GitWebhookRecord.Handler webhookHandler;
     private ConfigAutoCommitter autoCommitter;
 
     /** Gateway context, available after {@link #setup(GatewayContext)} has run. */
@@ -85,6 +89,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         registry.register(GitAutomationRecord.META);
         registry.register(GitTriggerRecord.META);
         registry.register(GitSyncRecord.META);
+        registry.register(GitWebhookRecord.META);
 
         // Create the resource handlers (DAOs) and publish them to the record façades.
         projectHandler = new GitProjectsConfigRecord.Handler(context);
@@ -96,6 +101,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         automationHandler = new GitAutomationRecord.Handler(context);
         triggerHandler = new GitTriggerRecord.Handler(context);
         syncHandler = new GitSyncRecord.Handler(context);
+        webhookHandler = new GitWebhookRecord.Handler(context);
 
         GitProjectsConfigRecord.setHandler(projectHandler);
         GitReposUsersRecord.setHandler(repoUserHandler);
@@ -106,6 +112,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         GitAutomationRecord.setHandler(automationHandler);
         GitTriggerRecord.setHandler(triggerHandler);
         GitSyncRecord.setHandler(syncHandler);
+        GitWebhookRecord.setHandler(webhookHandler);
 
         scriptModule = new GatewayScriptModule(context);
 
@@ -138,6 +145,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         automationHandler.startup();
         triggerHandler.startup();
         syncHandler.startup();
+        webhookHandler.startup();
 
         // Event delivery and scheduled sync. Both are inert until configured, so starting them
         // unconditionally costs one idle thread each and keeps the wiring in one place.
@@ -165,6 +173,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     public void shutdown() {
         SyncScheduler.shutdown();
         GitEvents.shutdown();
+        if (webhookHandler != null) webhookHandler.shutdown();
         if (syncHandler != null) syncHandler.shutdown();
         if (triggerHandler != null) triggerHandler.shutdown();
         if (automationHandler != null) automationHandler.shutdown();
@@ -288,6 +297,22 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         routes.newRoute("/project-images").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.WRITE)
                 .handler(this::handleProjectImages).mount();
+
+        routes.newRoute("/webhook-config").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.READ).nocache()
+                .handler(this::handleGetWebhook).mount();
+
+        routes.newRoute("/webhook-config").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleSaveWebhook).mount();
+
+        // The inbound webhook. OPEN_ROUTE on purpose and uniquely: GitHub can present neither a
+        // gateway session nor the X-CSRF-Token that requirePermission's strategy demands, so the
+        // route authenticates the request itself, by HMAC over the raw body. It stays a 404 until
+        // a secret is configured.
+        routes.newRoute("/webhook").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .accessControl(AccessControlStrategy.OPEN_ROUTE).nocache()
+                .handler(WebhookReceiver::handle).mount();
 
         // Automation: settings, the outbound trigger rules, per-project sync, and the event log.
         routes.newRoute("/automation").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
@@ -1012,6 +1037,47 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         }
     }
 
+    /** The webhook settings the Automation tab renders. The secret is never returned. */
+    private Object handleGetWebhook(RequestContext req, HttpServletResponse resp) {
+        try {
+            GitWebhookRecord cfg = GitWebhookRecord.get();
+            JsonObject out = new JsonObject();
+            out.addProperty("enabled", cfg.isEnabled());
+            out.addProperty("hasSecret", cfg.hasSecret());
+            out.addProperty("syncEvents", cfg.getSyncEvents());
+            out.addProperty("url", "/data/" + MOUNT_ALIAS + "/webhook");
+            JsonArray known = new JsonArray();
+            GitWebhookRecord.KNOWN_EVENTS.forEach(known::add);
+            out.add("knownEvents", known);
+            return out.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    /** Saves the webhook settings. An omitted secret leaves the stored one alone. */
+    private Object handleSaveWebhook(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            GitWebhookRecord cfg = GitWebhookRecord.get();
+            cfg.setEnabled(body.has("enabled") && body.get("enabled").getAsBoolean());
+            cfg.setSyncEvents(optString(body, "syncEvents"));
+            String secret = optString(body, "secret");
+            if (secret != null && !secret.isBlank()) {
+                cfg.setSecret(secret);
+            } else if (body.has("clearSecret") && body.get("clearSecret").getAsBoolean()) {
+                cfg.setSecret(null);
+            }
+            cfg.save();
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", true);
+            out.addProperty("hasSecret", cfg.hasSecret());
+            return out.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
     /**
      * Top-level folders in the gateway image store, so the Projects tab can offer them rather than
      * asking someone to type a path they have to go and look up.
@@ -1176,6 +1242,9 @@ public class GatewayHook extends AbstractGatewayModuleHook {
                 eo.addProperty("commit", e.commit());
                 eo.addProperty("message", e.message());
                 eo.addProperty("fileCount", e.files().size());
+                JsonObject det = new JsonObject();
+                e.details().forEach(det::addProperty);
+                eo.add("details", det);
                 eo.addProperty("timestamp", e.timestamp());
                 eo.addProperty("delivery", entry.delivery());
                 log.add(eo);
