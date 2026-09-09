@@ -3,6 +3,16 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.12.3] - 2026-09-09
+
+### Fixed
+- **A resource deleted on the remote no longer survives a clone.** The checkout's
+  cleanup was `git.clean().setForce(true)` — `git clean -f` with no `-d` — and JGit
+  leaves an entirely untracked directory alone, as does `reset --hard`. A view
+  removed from the remote therefore stayed on disk through the checkout and came
+  back as *Added* in the pulling gateway's Changes list. Cleanup now sets
+  `setCleanDirectories(true)`; ignored files are still left alone.
+
 ## [2.12.2] - 2026-09-08
 
 ### Fixed

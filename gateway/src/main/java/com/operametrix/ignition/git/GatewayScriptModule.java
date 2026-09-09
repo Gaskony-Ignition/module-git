@@ -817,7 +817,10 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
                     .setStartPoint(remoteName + "/" + defaultBranch);
             checkout.call();
 
-            git.clean().setForce(true).call();
+            // Without cleanDirectories this is `git clean -f`, which leaves a whole
+            // untracked folder alone: a view the remote deleted survived a clone
+            // and showed as Added on the pulling gateway.
+            git.clean().setForce(true).setCleanDirectories(true).call();
             git.reset().setMode(ResetCommand.ResetType.HARD).call();
 
             GitProjectManager.importProject(projectName);
