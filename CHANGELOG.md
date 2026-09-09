@@ -3,6 +3,23 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.12.6] - 2026-09-09
+
+### Changed
+- **Importing images now merges instead of replacing.** A pull or clone adds and updates
+  the images the project carries and leaves everything else in the gateway store alone.
+  Previously the whole store was cleared first, which made one project's `images/` folder
+  authoritative for a resource that is gateway-wide, not per project — so importing a
+  project could delete another project's images even when the import itself succeeded.
+  2.12.5 stopped the empty-snapshot case; this removes the destructive behaviour entirely.
+
+  An image dropped from a project therefore stays on the gateway and needs deleting by
+  hand. That is the deliberate trade: a stale image is a tidy-up, someone else's deleted
+  image is a restore from backup.
+
+  Imports are also idempotent now — an image already present with identical bytes is
+  skipped rather than re-inserted, so a routine pull no longer churns the whole store.
+
 ## [2.12.5] - 2026-09-09
 
 ### Fixed

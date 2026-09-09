@@ -13,6 +13,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Optional;
 
 import static com.operametrix.ignition.git.GatewayHook.getContext;
 import static com.operametrix.ignition.git.managers.GitManager.clearDirectory;
@@ -21,31 +23,24 @@ import static com.operametrix.ignition.git.managers.GitManager.getProjectFolderP
 public class GitImageManager {
     private final static LoggerEx logger = LoggerEx.newBuilder().build(GitImageManager.class);
 
+    /**
+     * Merge the project's image snapshot into the gateway image store.
+     *
+     * <p><b>Merge, not replace.</b> The store is gateway-scoped, so replacing it made one
+     * project's {@code images/} folder authoritative for every other project — and a project
+     * with no snapshot cleared it outright, which deleted the platform's 704 Builtin icons on
+     * the first clone.
+     *
+     * <p>Nothing here deletes. An image dropped from the project therefore stays on the gateway.
+     * That is the deliberate trade: a stale image is a tidy-up, someone else's deleted image is
+     * a restore from backup.
+     */
     public static void importImages(String projectName) {
         Path projectDir = getProjectFolderPath(projectName);
         File directory = projectDir.resolve("images").toFile();
-
-        // The image store is GATEWAY-scoped, not per project, so clearing it when this project
-        // carries no snapshot destroys images that belong to something else. It did exactly
-        // that: the first clone of a project with no images/ folder deleted the platform's 704
-        // Builtin icons. importTagManager and importTheme both no-op when the project has
-        // nothing to import; this now matches them.
         if (!directory.isDirectory()) {
             return;
         }
-
-        // DELETION — clear the gateway image store before re-importing the snapshot.
-        ImageManager imageManager = getContext().getImageManager();
-        for (ImageResource image : imageManager.getImages("")) {
-            String imagePath = image.path().getPath().toString();
-            try {
-                imageManager.deleteImage(imagePath);
-            } catch (Exception ex) {
-                logger.error("Unable to delete image '" + imagePath + "'", ex);
-            }
-        }
-
-        // INSERTION
         File[] files = directory.listFiles();
         uploadFiles(files != null ? files : new File[0]);
     }
@@ -84,10 +79,22 @@ public class GitImageManager {
                     height = img.getHeight(null);
                 }
 
+                // Idempotent: a pull re-imports the whole snapshot, and the gateway store
+                // already holds most of it. Skipping identical bytes keeps a routine pull quiet
+                // instead of logging an insert conflict per image.
+                ImageManager imageManager = getContext().getImageManager();
+                String fullPath = path.isEmpty() ? f.getName() : path + f.getName();
                 try {
-                    getContext().getImageManager().insertImage(f.getName(), "", format, path, bytes, width, height, bytes.length);
+                    Optional<ImageResource> existing = imageManager.getImage(fullPath);
+                    if (existing.isPresent()) {
+                        if (Arrays.equals(existing.get().data().getBytes(), bytes)) {
+                            return;
+                        }
+                        imageManager.deleteImage(fullPath);
+                    }
+                    imageManager.insertImage(f.getName(), "", format, path, bytes, width, height, bytes.length);
                 } catch (Exception ex) {
-                    logger.error(ex.getMessage(), ex);
+                    logger.error("Unable to import image '" + fullPath + "'", ex);
                 }
             } catch (FileNotFoundException e) {
                 logger.error("FileNotFound exception for file: '" + f.getPath() + "'");
