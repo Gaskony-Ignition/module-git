@@ -11,6 +11,7 @@ import {
   useGetCredentialsQuery,
   useGetProjectsQuery,
   useInitProjectMutation,
+  useSetProjectImagesMutation,
   useSetProjectRemoteMutation,
 } from "./GitConfig.service";
 import { errorToast } from "./errors";
@@ -25,50 +26,70 @@ const Projects = () => {
   const [init, { isLoading: initialising }] = useInitProjectMutation();
   const [setRemote, { isLoading: settingRemote }] =
     useSetProjectRemoteMutation();
+  const [setImages, { isLoading: settingImages }] =
+    useSetProjectImagesMutation();
   const toasts = useToastNotifications();
 
   const [target, setTarget] = React.useState<ProjectStatus | null>(null);
   const [url, setUrl] = React.useState("");
   const [credId, setCredId] = React.useState("");
+  const [imagePrefix, setImagePrefix] = React.useState("");
 
   const credentials = creds?.credentials ?? [];
   const projects = data?.projects ?? [];
+  const imageFolders = data?.imageFolders ?? [];
 
   const close = () => {
     setTarget(null);
     setUrl("");
     setCredId("");
+    setImagePrefix("");
   };
 
   const submit = () => {
     if (!target) return;
     const chosen = credentials.find((c) => String(c.id) === credId);
-    const run = target.versioned
-      ? setRemote({ project: target.name, url: url.trim() })
-      : init({
-          project: target.name,
-          url: url.trim() || undefined,
-          sshKeyId: chosen?.type === "SSH" ? chosen.id : undefined,
-          httpsCredentialId: chosen?.type === "HTTPS" ? chosen.id : undefined,
-        });
-    run
+
+    // A versioned project's panel edits two independent things. Only send what changed, so
+    // adjusting the image folder does not require re-entering a remote URL that is already set.
+    if (target.versioned) {
+      const remoteChanged =
+        url.trim() !== "" && url.trim() !== (target.remoteUrl || "");
+      const imagesChanged = imagePrefix !== (target.imagePrefix || "");
+      const steps: Promise<unknown>[] = [];
+      if (remoteChanged) {
+        steps.push(
+          setRemote({ project: target.name, url: url.trim() }).unwrap()
+        );
+      }
+      if (imagesChanged) {
+        steps.push(setImages({ project: target.name, imagePrefix }).unwrap());
+      }
+      if (steps.length === 0) {
+        close();
+        return;
+      }
+      Promise.all(steps)
+        .then(() => {
+          toasts.notifySuccess(`Saved ${target.name}`);
+          close();
+        })
+        .catch(errorToast(toasts, `Could not save ${target.name}`));
+      return;
+    }
+
+    init({
+      project: target.name,
+      url: url.trim() || undefined,
+      sshKeyId: chosen?.type === "SSH" ? chosen.id : undefined,
+      httpsCredentialId: chosen?.type === "HTTPS" ? chosen.id : undefined,
+    })
       .unwrap()
       .then(() => {
-        toasts.notifySuccess(
-          target.versioned
-            ? `Remote set on ${target.name}`
-            : `${target.name} is now under version control`
-        );
+        toasts.notifySuccess(`${target.name} is now under version control`);
         close();
       })
-      .catch(
-        errorToast(
-          toasts,
-          target.versioned
-            ? "Could not set the remote"
-            : "Could not initialise the repository"
-        )
-      );
+      .catch(errorToast(toasts, "Could not initialise the repository"));
   };
 
   const state = (p: ProjectStatus) => {
@@ -106,6 +127,7 @@ const Projects = () => {
               <th>Project</th>
               <th>Branch</th>
               <th>Remote</th>
+              <th>Images</th>
               <th>State</th>
               <th />
             </tr>
@@ -123,6 +145,9 @@ const Projects = () => {
                 <td className="gitcfg-proj-remote">
                   {p.remoteUrl ? p.remoteUrl : p.versioned ? "Local only" : "—"}
                 </td>
+                <td className="gitcfg-proj-remote">
+                  {p.versioned ? p.imagePrefix || "None" : "—"}
+                </td>
                 <td>{state(p)}</td>
                 <td className="gitcfg-proj-act">
                   <Button
@@ -131,9 +156,10 @@ const Projects = () => {
                       setTarget(p);
                       setUrl(p.remoteUrl || "");
                       setCredId("");
+                      setImagePrefix(p.imagePrefix || "");
                     }}
                   >
-                    {p.versioned ? "Set remote" : "Set up"}
+                    {p.versioned ? "Edit" : "Set up"}
                   </Button>
                 </td>
               </tr>
@@ -146,7 +172,7 @@ const Projects = () => {
         <div className="gitcfg-cred-form">
           <h4>
             {target.versioned
-              ? `Remote for ${target.name}`
+              ? target.name
               : `Put ${target.name} under version control`}
           </h4>
           <TextInput
@@ -161,6 +187,25 @@ const Projects = () => {
               setUrl(e.target.value)
             }
           />
+          {target.versioned ? (
+            <>
+              <SelectInput
+                label="Images folder — which part of the gateway image store this project versions"
+                value={imagePrefix}
+                values={[
+                  { label: "None — version no images", value: "" },
+                  ...imageFolders.map((f: string) => ({ label: f, value: f })),
+                ]}
+                onChange={(e: unknown) => setImagePrefix(selectValue(e))}
+              />
+              <p className="gitcfg-hint">
+                The image store belongs to the gateway, not to any one project.
+                Versioning a folder here exports only that folder, so two
+                projects never fight over the same images. Importing never
+                deletes, so an image you stop versioning stays on the gateway.
+              </p>
+            </>
+          ) : null}
           {!target.versioned && url.trim() !== "" ? (
             <SelectInput
               label="Credential"
@@ -178,17 +223,13 @@ const Projects = () => {
             </Button>
             <Button
               colorClass="primary"
-              disabled={
-                initialising ||
-                settingRemote ||
-                (target.versioned && url.trim() === "")
-              }
+              disabled={initialising || settingRemote || settingImages}
               onClick={submit}
             >
-              {initialising || settingRemote
+              {initialising || settingRemote || settingImages
                 ? "Working…"
                 : target.versioned
-                ? "Save remote"
+                ? "Save"
                 : url.trim() === ""
                 ? "Initialise locally"
                 : "Clone"}

@@ -85,9 +85,14 @@ export interface ProjectStatus {
   remoteUrl?: string | null;
   changes: number;
   error?: string | null;
+  // The image-store folder this project versions. Empty means it versions none, which is
+  // the default: every project used to export the whole store into its own repository.
+  imagePrefix?: string;
 }
 export interface ProjectsResp {
   projects: ProjectStatus[];
+  // Top-level folders in the gateway image store, offered as choices.
+  imageFolders?: string[];
 }
 // Add-credential request: each secret is either typed inline or a Secret Provider reference.
 export type AddCredentialReq =
@@ -305,6 +310,17 @@ export const gitConfigApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ["projects"],
     }),
+    setProjectImages: builder.mutation<
+      unknown,
+      { project: string; imagePrefix: string }
+    >({
+      query: (body) => ({
+        url: `${BASE}/project-images`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["projects"],
+    }),
     restore: builder.mutation<unknown, { hash: string }>({
       query: (body) => ({ url: `${BASE}/restore`, method: "POST", body }),
       invalidatesTags: ["status", "history"],
@@ -412,6 +428,7 @@ export const {
   useGetProjectsQuery,
   useInitProjectMutation,
   useSetProjectRemoteMutation,
+  useSetProjectImagesMutation,
   useRestoreMutation,
   useInitMutation,
   useDeinitMutation,

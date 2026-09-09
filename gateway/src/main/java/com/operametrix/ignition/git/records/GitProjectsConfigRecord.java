@@ -19,8 +19,20 @@ public class GitProjectsConfigRecord {
 
     public static final String MODULE_ID = "com.operametrix.ignition.git";
 
-    /** Immutable persisted form. */
-    public record Config(long id, String projectName) {}
+    /**
+     * Immutable persisted form.
+     *
+     * <p>{@code imagePrefix} names the folder in the gateway image store that this project
+     * versions. It is opt-in and defaults to empty, which means the project exports no images
+     * at all. Before it existed, every project exported the ENTIRE store — so every repository
+     * carried a copy of the platform's ~700 Builtin icons. Resources persisted before this
+     * field was added decode it as null, hence {@link #imagePrefixOrEmpty()}.
+     */
+    public record Config(long id, String projectName, String imagePrefix) {
+        public String imagePrefixOrEmpty() {
+            return imagePrefix == null ? "" : imagePrefix;
+        }
+    }
 
     public static final ResourceType TYPE = new ResourceType(MODULE_ID, "git-project");
 
@@ -48,6 +60,7 @@ public class GitProjectsConfigRecord {
 
     private long id;
     private String projectName;
+    private String imagePrefix = "";
 
     public GitProjectsConfigRecord() {
     }
@@ -55,6 +68,7 @@ public class GitProjectsConfigRecord {
     private GitProjectsConfigRecord(Config c) {
         this.id = c.id();
         this.projectName = c.projectName();
+        this.imagePrefix = c.imagePrefixOrEmpty();
     }
 
     public long getId() {
@@ -69,6 +83,14 @@ public class GitProjectsConfigRecord {
         this.projectName = projectName;
     }
 
+    public String getImagePrefix() {
+        return imagePrefix == null ? "" : imagePrefix;
+    }
+
+    public void setImagePrefix(String imagePrefix) {
+        this.imagePrefix = imagePrefix == null ? "" : imagePrefix.trim();
+    }
+
     private static final Object SAVE_LOCK = new Object();
 
     public void save() {
@@ -77,7 +99,7 @@ public class GitProjectsConfigRecord {
                 if (id == 0L) {
                     id = nextId();
                 }
-                Config c = new Config(id, projectName);
+                Config c = new Config(id, projectName, getImagePrefix());
                 String name = String.valueOf(id);
                 if (handler.findResource(name).isPresent()) {
                     handler.modify(name, c).join();
@@ -104,6 +126,12 @@ public class GitProjectsConfigRecord {
                 .mapToLong(Config::id)
                 .max()
                 .orElse(0L) + 1L;
+    }
+
+    /** The image-store folder this project versions, or empty when it versions none. */
+    public static String imagePrefixFor(String projectName) {
+        GitProjectsConfigRecord r = findByProjectName(projectName);
+        return r == null ? "" : r.getImagePrefix();
     }
 
     public static GitProjectsConfigRecord findByProjectName(String projectName) {

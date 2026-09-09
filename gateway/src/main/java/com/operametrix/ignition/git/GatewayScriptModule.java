@@ -338,7 +338,7 @@ public class GatewayScriptModule extends AbstractScriptModule implements GitScri
 
     @Override
     protected boolean snapshotImagesImpl(String projectName) {
-        exportImages(getProjectFolderPath(projectName));
+        exportImages(getProjectFolderPath(projectName), GitProjectsConfigRecord.imagePrefixFor(projectName));
         return true;
     }
 

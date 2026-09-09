@@ -126,7 +126,7 @@ public final class GitLegacyImporter {
                     // source of truth for remotes, so the record only carries identity.
                     GitProjectsConfigRecord.handler().create(name,
                             new GitProjectsConfigRecord.Config(id,
-                                    r.getString(LegacyProjectsConfig.ProjectName))).join();
+                                    r.getString(LegacyProjectsConfig.ProjectName), "")).join();
                     n++;
                 }
                 deleteLegacy(ctx, r);

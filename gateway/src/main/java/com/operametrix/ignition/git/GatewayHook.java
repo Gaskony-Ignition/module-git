@@ -285,6 +285,10 @@ public class GatewayHook extends AbstractGatewayModuleHook {
                 .requirePermission(PermissionType.WRITE)
                 .handler(this::handleProjectRemote).mount();
 
+        routes.newRoute("/project-images").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleProjectImages).mount();
+
         // Automation: settings, the outbound trigger rules, per-project sync, and the event log.
         routes.newRoute("/automation").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.READ).nocache()
@@ -996,11 +1000,62 @@ public class GatewayHook extends AbstractGatewayModuleHook {
                 o.addProperty("remoteUrl", p.remoteUrl());
                 o.addProperty("changes", p.changes());
                 o.addProperty("error", p.error());
+                o.addProperty("imagePrefix", GitProjectsConfigRecord.imagePrefixFor(p.name()));
                 arr.add(o);
             }
             JsonObject out = new JsonObject();
             out.add("projects", arr);
+            out.add("imageFolders", imageStoreFolders());
             return out.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    /**
+     * Top-level folders in the gateway image store, so the Projects tab can offer them rather than
+     * asking someone to type a path they have to go and look up.
+     */
+    private JsonArray imageStoreFolders() {
+        JsonArray out = new JsonArray();
+        try {
+            java.util.TreeSet<String> names = new java.util.TreeSet<>();
+            for (var image : context.getImageManager().getImages("")) {
+                String path = image.path().getPath().toString();
+                int slash = path.indexOf('/');
+                if (slash > 0) {
+                    names.add(path.substring(0, slash));
+                }
+            }
+            names.forEach(out::add);
+        } catch (Exception e) {
+            logger.warn("Unable to list the image store; the folder list will be empty.", e);
+        }
+        return out;
+    }
+
+    /**
+     * Set which image-store folder a project versions. Empty means none, which is the default —
+     * before this existed every project exported the whole store into its own repository.
+     */
+    private Object handleProjectImages(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            String project = optString(body, "project");
+            if (project == null || project.isBlank()) {
+                throw new RuntimeException("A project name is required.");
+            }
+            GitProjectsConfigRecord record = GitProjectsConfigRecord.findByProjectName(project.trim());
+            if (record == null) {
+                throw new RuntimeException("Project '" + project.trim() + "' is not under version control.");
+            }
+            String prefix = optString(body, "imagePrefix");
+            record.setImagePrefix(prefix == null ? "" : prefix);
+            record.save();
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", true);
+            o.addProperty("imagePrefix", record.getImagePrefix());
+            return o.toString();
         } catch (Exception e) {
             return error(resp, e);
         }

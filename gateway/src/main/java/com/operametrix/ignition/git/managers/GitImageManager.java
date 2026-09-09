@@ -124,7 +124,16 @@ public class GitImageManager {
         }
     }
 
-    public static void exportImages(Path projectFolderPath) {
+    /**
+     * Write the images this project versions into {@code <project>/images}.
+     *
+     * <p>{@code prefix} is the folder in the gateway image store the project owns, and it is
+     * opt-in: an empty prefix versions nothing and clears the folder. Every project used to
+     * export the ENTIRE store, so each repository carried its own copy of the platform's ~700
+     * Builtin icons — a large, permanently-churning diff in every project that nobody had asked
+     * to version images at all.
+     */
+    public static void exportImages(Path projectFolderPath, String prefix) {
         Path imageFolderPath = projectFolderPath.resolve("images");
         clearDirectory(imageFolderPath);
         try {
@@ -133,19 +142,39 @@ public class GitImageManager {
             logger.error(e.toString(), e);
         }
 
+        String scope = prefix == null ? "" : prefix.trim();
+        while (scope.startsWith("/")) {
+            scope = scope.substring(1);
+        }
+        while (scope.endsWith("/")) {
+            scope = scope.substring(0, scope.length() - 1);
+        }
+        if (scope.isEmpty()) {
+            logger.debug("No image folder configured for this project; exporting no images.");
+            return;
+        }
+
         ImageManager imageManager = getContext().getImageManager();
+        int written = 0;
         for (ImageResource image : imageManager.getImages("")) {
             String relPath = image.path().getPath().toString();
+            // Match the folder itself and everything under it, never a sibling whose name merely
+            // starts with the same characters ("Plant" must not pick up "PlantRoom").
+            if (!relPath.equals(scope) && !relPath.startsWith(scope + "/")) {
+                continue;
+            }
             Path target = imageFolderPath.resolve(relPath);
             try {
                 if (target.getParent() != null) {
                     Files.createDirectories(target.getParent());
                 }
                 Files.write(target, image.data().getBytes());
+                written++;
             } catch (IOException e) {
                 logger.error("Unable to export image '" + relPath + "'", e);
             }
         }
+        logger.info("Exported " + written + " image(s) under '" + scope + "'.");
     }
 }
 
