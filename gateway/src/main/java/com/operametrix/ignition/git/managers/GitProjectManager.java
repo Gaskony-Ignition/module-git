@@ -120,6 +120,19 @@ public class GitProjectManager {
         Path projectDir = getProjectFolderPath(projectName);
 
         try {
+            // A project this gateway does not already have cannot be created over a directory
+            // that already has content — createOrReplace refuses a non-empty path for an
+            // unregistered collection ("exists but is not empty"). A clone produces exactly
+            // that, so cloning a project the gateway had never seen failed after the files had
+            // already landed, and the rollback then left them behind with no repository. Let the
+            // scanner adopt it from disk instead; the resources are already correct there.
+            if (!projectManager.getNames().contains(projectName)) {
+                logger.info("Project '" + projectName
+                        + "' is new to this gateway; adopting the cloned files via a scan.");
+                requestScanQuietly(projectManager);
+                return;
+            }
+
             Set<Resource> resources = importFromFolder(projectDir, projectName);
             ResourceCollectionManifest projectManifest = loadProjectManifest(projectDir);
             projectManager.createOrReplace(projectName, projectManifest, new ArrayList<>(resources));
@@ -127,6 +140,18 @@ public class GitProjectManager {
         } catch (ResourceCollectionInvalidException | ResourceCollectionImmutableException | IOException e) {
             logger.error("An error occurred while importing '" + projectName + "' project.", e);
             throw new RuntimeException(e);
+        }
+    }
+
+    /** Waits for the scan so the caller's next read sees the project, but never hangs on it. */
+    private static void requestScanQuietly(ProjectManager projectManager) {
+        try {
+            projectManager.requestScan().get(30, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            logger.warn("Scan after cloning a new project did not complete in time; "
+                    + "the project appears once the next scan picks it up.", e);
         }
     }
 

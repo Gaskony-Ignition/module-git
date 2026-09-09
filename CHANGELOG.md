@@ -3,6 +3,33 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.12.5] - 2026-09-09
+
+### Fixed
+- **Cloning a project no longer wipes the gateway's image library.** `importImages`
+  cleared the ENTIRE gateway image store and then uploaded whatever the project
+  carried in `images/`. The store is gateway-scoped, not per project, so a project
+  with no `images/` folder cleared it and restored nothing — deleting the platform's
+  704 Builtin icons and any other project's images along with them. The clone path
+  calls this unconditionally, so it happened on the first clone. It now returns
+  early when the project has no snapshot to import, matching `importTagManager` and
+  `importTheme`, which have always no-opped in that case.
+
+  A project that *does* carry `images/` still replaces the whole gateway store, which
+  is upstream's deliberate design. That remains a sharp edge: it is a gateway-wide
+  operation driven by one project's contents.
+
+## [2.12.4] - 2026-09-09
+
+### Fixed
+- **Cloning a project this gateway has never had now works.** The import step called
+  `createOrReplace`, which refuses a non-empty directory for a collection Ignition
+  does not already know — and a clone produces exactly that. The files landed, the
+  call threw *"exists but is not empty"*, and the rollback removed the repository
+  and the config records while leaving the checked-out files on disk. A project new
+  to the gateway is now adopted from disk by a scan instead. Replacing an existing
+  project is unchanged.
+
 ## [2.12.3] - 2026-09-09
 
 ### Fixed

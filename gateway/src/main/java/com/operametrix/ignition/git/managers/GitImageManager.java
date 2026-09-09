@@ -25,6 +25,15 @@ public class GitImageManager {
         Path projectDir = getProjectFolderPath(projectName);
         File directory = projectDir.resolve("images").toFile();
 
+        // The image store is GATEWAY-scoped, not per project, so clearing it when this project
+        // carries no snapshot destroys images that belong to something else. It did exactly
+        // that: the first clone of a project with no images/ folder deleted the platform's 704
+        // Builtin icons. importTagManager and importTheme both no-op when the project has
+        // nothing to import; this now matches them.
+        if (!directory.isDirectory()) {
+            return;
+        }
+
         // DELETION — clear the gateway image store before re-importing the snapshot.
         ImageManager imageManager = getContext().getImageManager();
         for (ImageResource image : imageManager.getImages("")) {
