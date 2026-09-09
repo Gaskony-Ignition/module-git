@@ -15,7 +15,7 @@ import java.util.Map;
  */
 public record GitEvent(String type, String outcome, String scope, String project, String user,
                        String branch, String remote, String commit, String message,
-                       List<String> files, Map<String, String> details, String timestamp) {
+                       List<String> files, String timestamp) {
 
     public static final String COMMIT = "commit";
     public static final String PUSH = "push";
@@ -26,11 +26,10 @@ public record GitEvent(String type, String outcome, String scope, String project
     public static final String REVERT = "revert";
     public static final String AUTOCOMMIT = "autocommit";
     public static final String SYNC = "sync";
-    public static final String WEBHOOK = "webhook";
 
     /** Every type, in the order the Automation tab lists them. */
     public static final List<String> TYPES =
-            List.of(COMMIT, PUSH, PULL, FETCH, CHECKOUT, BRANCH, REVERT, AUTOCOMMIT, SYNC, WEBHOOK);
+            List.of(COMMIT, PUSH, PULL, FETCH, CHECKOUT, BRANCH, REVERT, AUTOCOMMIT, SYNC);
 
     public static final String SUCCESS = "success";
     public static final String FAILURE = "failure";
@@ -40,7 +39,6 @@ public record GitEvent(String type, String outcome, String scope, String project
 
     public GitEvent {
         files = files == null ? List.of() : List.copyOf(files);
-        details = details == null ? Map.of() : Map.copyOf(details);
     }
 
     public static Builder of(String type) {
@@ -68,7 +66,6 @@ public record GitEvent(String type, String outcome, String scope, String project
         m.put("commit", nz(commit));
         m.put("message", nz(message));
         m.put("files", Collections.unmodifiableList(new ArrayList<>(files)));
-        m.put("details", Collections.unmodifiableMap(new LinkedHashMap<>(details)));
         m.put("timestamp", nz(timestamp));
         return m;
     }
@@ -87,7 +84,6 @@ public record GitEvent(String type, String outcome, String scope, String project
         private String commit;
         private String message;
         private List<String> files = List.of();
-        private Map<String, String> details = Map.of();
 
         private Builder(String type) {
             this.type = type;
@@ -138,16 +134,6 @@ public record GitEvent(String type, String outcome, String scope, String project
             return this;
         }
 
-        /**
-         * Event-specific extras that have no column of their own — the GitHub event name and a
-         * workflow run's conclusion, for instance. Kept as a flat string map so it survives into
-         * Jython as a plain dict and into a trigger template as {@code ${details.name}}.
-         */
-        public Builder details(Map<String, String> v) {
-            this.details = v == null ? Map.of() : Map.copyOf(v);
-            return this;
-        }
-
         public GitEvent success() {
             return build(SUCCESS);
         }
@@ -160,7 +146,7 @@ public record GitEvent(String type, String outcome, String scope, String project
 
         private GitEvent build(String outcome) {
             return new GitEvent(type, outcome, scope, project, user, branch, remote, commit,
-                    message, files, details, Instant.now().toString());
+                    message, files, Instant.now().toString());
         }
     }
 }

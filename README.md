@@ -56,13 +56,6 @@ visible.
 
 ![The Automation tab, with its event log](docs/images/versioning-automation.png)
 
-A repository can also post to the gateway rather than waiting for the next poll.
-The route carries no session and no permission check — GitHub can present
-neither — so it authenticates each delivery itself, and stays a 404 until a
-secret is set.
-
-![The Webhook tab](docs/images/versioning-webhook.png)
-
 ## What it does
 
 **In the Designer** — clone or initialise a project repository, manage remotes
@@ -83,16 +76,9 @@ library function, a Gateway Event message handler, or both. A matching event can
 also call a URL, with GitHub's `repository_dispatch` and `workflow_dispatch` as
 presets and `${owner}`/`${repo}` derived from the repository's own remote, so one
 rule serves every project. Inbound sync fetches on a timer and fast-forwards
-when the tracked branch moves, then requests a project scan. A sync refuses when
+when the tracked branch moves, then requests a project scan — polling rather
+than a webhook, because GitHub cannot reach most gateways. A sync refuses when
 the working tree is dirty rather than discarding someone's unsaved work.
-
-**Inbound webhooks** — a repository can post to the gateway instead of waiting
-for the next poll. Every accepted delivery raises an event carrying the GitHub
-event name, so a script can act on any of them without a module upgrade, and the
-event types you name additionally pull the project. `workflow_run` closes the
-loop with the outbound triggers: the gateway pushes, the Action runs, and the
-gateway hears the conclusion. Polling remains the default, because a gateway
-GitHub cannot open a connection to will never receive a delivery.
 
 Changes over upstream 2.1.0:
 
@@ -100,8 +86,7 @@ Changes over upstream 2.1.0:
 - Change badges in the Designer's Project Browser.
 - Projects and Credentials tabs: see and set up project repositories, and create
   the credentials they need, without opening a Designer first.
-- Automation: git events into Jython, outbound triggers for CI, scheduled sync,
-  and an inbound webhook that authenticates itself by HMAC.
+- Automation: git events into Jython, outbound triggers for CI, scheduled sync.
 - A project versions one named image folder rather than exporting the whole
   gateway image store into every repository.
 - Commits stage exactly what the change list shows. They previously staged the
@@ -129,14 +114,8 @@ versioning**. Adjust what is covered under **Excluded files**.
 Automation: **Platform → System → Versioning → Automation**. Tick *Deliver git
 events to a script*, pick a project and a function path such as
 `Git.Events.onGitEvent`, and press **Fire a test event** — the event log below
-says whether it arrived. Outbound triggers, scheduled sync and the inbound
-webhook are on the same tab.
-
-Webhooks: on the **Webhook** sub-tab, tick *Accept inbound webhook deliveries*,
-set a secret, and copy the payload URL into the repository's webhook settings
-with the same secret. The route answers 404 until a secret is set. A
-webhook-driven pull takes its credential and branch from the project's Scheduled
-sync entry, so create one even if you leave its schedule turned off.
+says whether it arrived. Outbound triggers and scheduled sync are on the same
+tab.
 
 To build from source you need `gradle.properties` with the signing block —
 copy it from `gradle.template.properties` and fill in the keystore details:

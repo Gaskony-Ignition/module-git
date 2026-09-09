@@ -42,8 +42,7 @@ final class TriggerDelivery {
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
-    // Dots are part of a name so the flattened details map is reachable as ${details.conclusion}.
-    private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([a-zA-Z][a-zA-Z0-9.]*)}");
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([a-zA-Z]+)}");
 
     private TriggerDelivery() {
     }
@@ -166,10 +165,6 @@ final class TriggerDelivery {
         for (Map.Entry<String, Object> e : event.toMap().entrySet()) {
             if (e.getValue() instanceof List<?> list) {
                 vars.put(e.getKey(), String.join(", ", list.stream().map(String::valueOf).toList()));
-            } else if (e.getValue() instanceof Map<?, ?> map) {
-                // Flattened rather than rendered: String.valueOf on a Map emits Java map syntax,
-                // which is never what a template wanted.
-                map.forEach((k, v) -> vars.put(e.getKey() + "." + k, String.valueOf(v)));
             } else {
                 vars.put(e.getKey(), String.valueOf(e.getValue()));
             }

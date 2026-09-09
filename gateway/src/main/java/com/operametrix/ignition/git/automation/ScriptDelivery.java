@@ -119,13 +119,6 @@ final class ScriptDelivery {
     }
 
     private static PyObject toPy(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            PyDictionary out = new PyDictionary();
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                out.__setitem__(py(String.valueOf(entry.getKey())), toPy(entry.getValue()));
-            }
-            return out;
-        }
         if (value instanceof List<?> list) {
             PyList out = new PyList();
             for (Object item : list) {

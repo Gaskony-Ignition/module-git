@@ -89,15 +89,6 @@ export interface ProjectStatus {
   // the default: every project used to export the whole store into its own repository.
   imagePrefix?: string;
 }
-// Inbound webhook settings. The secret is write-only — the gateway reports only whether one
-// is set, never its value.
-export interface WebhookSettings {
-  enabled: boolean;
-  hasSecret: boolean;
-  syncEvents: string;
-  url: string;
-  knownEvents: string[];
-}
 export interface ProjectsResp {
   projects: ProjectStatus[];
   // Top-level folders in the gateway image store, offered as choices.
@@ -201,7 +192,6 @@ export interface EventLogEntry {
   commit: string;
   message: string;
   fileCount: number;
-  details?: Record<string, string>;
   timestamp: string;
   // What the bus did with it — the diagnostic when a handler appears to do nothing.
   delivery: string;
@@ -328,26 +318,6 @@ export const gitConfigApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ["projects"],
     }),
-    getWebhook: builder.query<WebhookSettings, void>({
-      query: () => `${BASE}/webhook-config`,
-      providesTags: ["webhook"],
-    }),
-    saveWebhook: builder.mutation<
-      unknown,
-      {
-        enabled: boolean;
-        syncEvents: string;
-        secret?: string;
-        clearSecret?: boolean;
-      }
-    >({
-      query: (body) => ({
-        url: `${BASE}/webhook-config`,
-        method: "POST",
-        body,
-      }),
-      invalidatesTags: ["webhook"],
-    }),
     setProjectImages: builder.mutation<
       unknown,
       { project: string; imagePrefix: string }
@@ -468,8 +438,6 @@ export const {
   useSetProjectRemoteMutation,
   useSetProjectImagesMutation,
   useSnapshotProjectImagesMutation,
-  useGetWebhookQuery,
-  useSaveWebhookMutation,
   useRestoreMutation,
   useInitMutation,
   useDeinitMutation,

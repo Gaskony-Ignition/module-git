@@ -3,6 +3,34 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.14.0] - 2026-09-09
+
+### Removed
+- **The inbound GitHub webhook, added one release ago.** It worked — signed synthetic deliveries
+  authenticated, replayed ones were rejected, and a matching project fast-forwarded — but it could
+  never receive a delivery from GitHub on any gateway here.
+
+  A webhook is GitHub opening a connection **to** the gateway. A credential cannot create an
+  inbound route: an HTTPS token or an SSH key authenticates the gateway calling **out**, which is
+  the direction that already works. Proving the feature meant putting a gateway on the public
+  internet behind a tunnel, and running it meant every site doing the same.
+
+  That left the module carrying a second inbound mechanism nobody could use, and the security
+  surface of a route with no session and no permission check, to save a poll interval. Scheduled
+  sync reaches the same state over the connection every gateway already has, so it is once again
+  the only inbound path. The reasoning is kept in `docs/AUTOMATION.md` so it is not rebuilt by
+  accident.
+
+- Events no longer carry a `details` dictionary. It existed to hold the GitHub event name and a
+  workflow run's conclusion; with the webhook gone nothing fills it, and an always-empty key in
+  every payload is worse than no key.
+
+### Kept from 2.13.0
+The three defects found while building the webhook were real and older than it. They stay fixed:
+non-ASCII in an event no longer stops delivery, script and trigger delivery no longer take each
+other down, and opening *Add credential* no longer crashes the page. So does the image work — the
+tree walk that made export function at all, and the per-project image folder.
+
 ## [2.13.0] - 2026-09-09
 
 ### Added
