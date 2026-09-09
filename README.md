@@ -56,6 +56,13 @@ visible.
 
 ![The Automation tab, with its event log](docs/images/versioning-automation.png)
 
+A repository can also post to the gateway rather than waiting for the next poll.
+The route carries no session and no permission check — GitHub can present
+neither — so it authenticates each delivery itself, and stays a 404 until a
+secret is set.
+
+![The Webhook tab](docs/images/versioning-webhook.png)
+
 ## What it does
 
 **In the Designer** — clone or initialise a project repository, manage remotes
