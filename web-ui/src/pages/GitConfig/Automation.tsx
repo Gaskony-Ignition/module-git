@@ -754,12 +754,12 @@ const Automation = () => {
             </code>
           </div>
 
+          <span className="gitcfg-auto-label">
+            {webhook?.hasSecret
+              ? "Secret — stored; type a new one to replace it"
+              : "Secret — the same value you paste into GitHub"}
+          </span>
           <TextInput
-            label={
-              webhook?.hasSecret
-                ? "Secret — stored; type a new one to replace it"
-                : "Secret — the same value you paste into GitHub"
-            }
             type="password"
             placeholder={webhook?.hasSecret ? "unchanged" : ""}
             value={hook.secret}
@@ -774,8 +774,10 @@ const Automation = () => {
             answers 404 to everyone.
           </p>
 
+          <span className="gitcfg-auto-label">
+            Event types that pull the project — comma separated
+          </span>
           <TextInput
-            label="Event types that pull the project — comma separated"
             placeholder="push"
             value={hook.syncEvents}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) =>

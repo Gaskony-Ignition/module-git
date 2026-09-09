@@ -600,3 +600,10 @@
   padding: 0.4rem 0.6rem;
   white-space: nowrap;
 }
+
+// Sits directly above a bare TextInput. The platform component takes a `label` but renders it
+// only into MUI's notched-outline legend, which ships at opacity 0 and is clipped by its own box
+// even when painted — measured on 8.3.8. Anything that must be read gets one of these instead.
+.gitcfg-auto-label + [data-component="web-ui.text-input"] {
+  margin-top: 0.1rem;
+}

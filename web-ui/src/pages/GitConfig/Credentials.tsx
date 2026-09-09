@@ -142,16 +142,22 @@ const Credentials = () => {
 
       {open ? (
         <div className="gitcfg-cred-form">
+          {/*
+            Radio is a radio GROUP: it takes a `radios` array and maps over it. Used as a single
+            radio with `label`/`checked` it reads `radios.map` on undefined and takes the whole
+            page down with an Application Error — which is what opening this form used to do.
+          */}
           <div className="gitcfg-cred-row">
             <Radio
-              label="SSH key"
-              checked={kind === "SSH"}
-              onChange={() => setKind("SSH")}
-            />
-            <Radio
-              label="HTTPS username and token"
-              checked={kind === "HTTPS"}
-              onChange={() => setKind("HTTPS")}
+              name="cred-kind"
+              value={kind}
+              radios={[
+                { label: "SSH key", value: "SSH" },
+                { label: "HTTPS username and token", value: "HTTPS" },
+              ]}
+              onChange={(_e: unknown, value: string) =>
+                setKind(value as "SSH" | "HTTPS")
+              }
             />
           </div>
 
@@ -185,14 +191,15 @@ const Credentials = () => {
 
           <div className="gitcfg-cred-row">
             <Radio
-              label="Type the secret"
-              checked={mode === "inline"}
-              onChange={() => setMode("inline")}
-            />
-            <Radio
-              label="Use a stored secret"
-              checked={mode === "reference"}
-              onChange={() => setMode("reference")}
+              name="cred-mode"
+              value={mode}
+              radios={[
+                { label: "Type the secret", value: "inline" },
+                { label: "Use a stored secret", value: "reference" },
+              ]}
+              onChange={(_e: unknown, value: string) =>
+                setMode(value as "inline" | "reference")
+              }
             />
           </div>
 

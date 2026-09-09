@@ -63,9 +63,23 @@ upstream's; everything below is this fork.
   triggers ran in one unguarded block, so a payload Jython refused to build meant the trigger never
   fired either, and the event log named only the first failure. Each path is now isolated and
   reports its own outcome.
+- **Opening the Add credential form crashed the whole page.** The platform's `Radio` is a radio
+  *group* — it takes a `radios` array and maps over it — and it was used as four single radios with
+  `label`/`checked`. It read `radios.map` on undefined and the page went to "Application Error".
+  Present since the Credentials tab shipped in 2.11.0, and the same class of mistake as the
+  `SelectInput` crash fixed in 2.12.1. Every tab and every form on the page is now swept for this
+  before release.
+
 - **`${…}` placeholders accept dots**, so the new `details` map is reachable from a trigger body as
   `${details.conclusion}`. The pattern matched letters only, and an unmatched placeholder is left
   as literal text — so a template referring to one silently posted the placeholder itself.
+
+### Known
+- **Field labels on these tabs are not painted.** The platform's `TextInput`/`SelectInput` accept a
+  `label` but render it only into MUI's notched-outline legend, which ships at opacity 0 and is
+  clipped by its own box even when made opaque — measured on 8.3.8. The webhook panel renders its
+  own labels; the older forms still rely on placeholder text and surrounding prose. Unchanged from
+  2.11, recorded here so it is not rediscovered.
 
 - Nothing else in the module — but `docs/TROUBLESHOOTING.md` now records why a Designer vanishes on
   macOS during a pull. It is [JDK-8372757](https://bugs.openjdk.org/browse/JDK-8372757), a
