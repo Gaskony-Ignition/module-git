@@ -465,6 +465,22 @@ export const gitConfigApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ["runner", "history", "projects"],
     }),
+    setProjectCredential: builder.mutation<
+      unknown,
+      {
+        project: string;
+        remoteName?: string;
+        sshKeyId?: number;
+        httpsCredentialId?: number;
+      }
+    >({
+      query: (body) => ({
+        url: `${BASE}/project-credential`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["projects"],
+    }),
   }),
   overrideExisting: false,
 });
@@ -506,4 +522,5 @@ export const {
   useGetRunnerQuery,
   useSaveRunnerMutation,
   useCommitRunnerWorkflowMutation,
+  useSetProjectCredentialMutation,
 } = gitConfigApi;

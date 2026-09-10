@@ -3,6 +3,33 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.18.0] - 2026-09-10
+
+Both of these were found by running the loop for real — a GitHub repository, a registered
+self-hosted runner, and a push to the default branch driving this gateway. Neither was visible
+from the module side alone.
+
+### Fixed
+- **The generated workflow triggered on `main`, but project-init creates `master`.** A workflow
+  whose trigger names a branch the repository does not have raises no error and produces no run —
+  it simply never fires, which is precisely the silent failure the setup generator exists to
+  prevent. The trigger is now the project's own branch, read from its repository.
+
+### Added
+- **A credential can be attached to a project's remote from the gateway page.** The association
+  lived only in the Designer's Remotes popup, so the Projects tab could set a remote it could never
+  authenticate to, and a project "set up without opening a Designer" still needed one before it
+  could fetch or push. `POST /project-credential`, and the credential picker in the Projects drawer
+  now shows for versioned projects instead of only during initialisation.
+
+### Verified end to end
+A public throwaway repository, a self-hosted runner registered with the generated `config.sh`
+command verbatim, and the gateway's own committed workflow. A push to `master` at 03:31:00Z reached
+the gateway at 03:31:11Z: the run reported `{"ok":true,"project":"_runner_live_","result":"pulled 2
+file(s)"}`, the files were on disk, the project came back clean, and the sync event logged
+`Pulled 2 changed file(s) from origin/master`. The runner, the repository and the fixtures were
+removed afterwards.
+
 ## [2.17.0] - 2026-09-10
 
 ### Added

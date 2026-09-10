@@ -309,6 +309,10 @@ public class GatewayHook extends AbstractGatewayModuleHook {
 
 
         // Automation: settings, the outbound trigger rules, per-project sync, and the event log.
+        routes.newRoute("/project-credential").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleProjectCredential).mount();
+
         routes.newRoute("/automation").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.READ).nocache()
                 .handler(this::handleGetAutomation).mount();
@@ -1145,6 +1149,46 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     }
 
     /** Attach or replace a project's remote, with the credential it should authenticate with. */
+    /**
+     * Attaches a stored credential to a project's remote.
+     *
+     * <p>Without this the Projects tab could set a remote it could never authenticate to: the
+     * credential association lived only in the Designer's Remotes popup, so a project set up
+     * entirely from the gateway page still needed a Designer before it could fetch or push.
+     * Auth type follows the remote's URL, so exactly one of the two ids is meaningful; passing
+     * zero for both clears the association.
+     */
+    private Object handleProjectCredential(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            String project = optString(body, "project");
+            if (project == null || project.isBlank()) {
+                throw new RuntimeException("A project is required.");
+            }
+            String remoteName = optString(body, "remoteName");
+            if (remoteName == null || remoteName.isBlank()) {
+                remoteName = "origin";
+            }
+            String owner = optString(body, "ignitionUser");
+            if (owner == null || owner.isBlank()) {
+                owner = req.getActor();
+            }
+            long sshKeyId = optLong(body, "sshKeyId");
+            long httpsCredentialId = optLong(body, "httpsCredentialId");
+            boolean ok = scriptModule.setRemoteCredentialRefImpl(
+                    project, remoteName, owner, sshKeyId, httpsCredentialId);
+            if (!ok) {
+                throw new RuntimeException(
+                        "Could not attach the credential — check the gateway log.");
+            }
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", true);
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
     private Object handleProjectRemote(RequestContext req, HttpServletResponse resp) {
         try {
             JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
@@ -1402,6 +1446,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
             // project's own repository.
             String project = req.getParameter("project");
             String remoteUrl = null;
+            String branch = null;
             JsonArray projects = new JsonArray();
             for (GitProjectManager.ProjectStatus ps : GitProjectManager.listProjectStatus()) {
                 if (ps.remoteUrl() == null || ps.remoteUrl().isBlank()) {
@@ -1411,6 +1456,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
                 if (project == null || project.isBlank() || project.equals(ps.name())) {
                     if (remoteUrl == null) {
                         remoteUrl = ps.remoteUrl();
+                        branch = ps.branch();
                         project = ps.name();
                     }
                 }
@@ -1419,7 +1465,8 @@ public class GatewayHook extends AbstractGatewayModuleHook {
             o.addProperty("project", project == null ? "" : project);
             o.addProperty("repoUrl", RunnerSetup.repoUrl(remoteUrl));
             o.addProperty("installScript", RunnerSetup.installScript(remoteUrl, cfg));
-            o.addProperty("workflowYaml", RunnerSetup.workflowYaml(project, cfg));
+            o.addProperty("branch", branch == null ? "" : branch);
+            o.addProperty("workflowYaml", RunnerSetup.workflowYaml(project, branch, cfg));
             o.addProperty("testCommand", RunnerSetup.testCommand(project, cfg));
             return o.toString();
         } catch (Exception e) {
@@ -1486,7 +1533,12 @@ public class GatewayHook extends AbstractGatewayModuleHook {
 
             Path root = GitManager.getProjectFolderPath(project);
             Path target = root.resolve(RunnerSetup.WORKFLOW_PATH);
-            String yaml = RunnerSetup.workflowYaml(project, cfg);
+            String branch = GitProjectManager.listProjectStatus().stream()
+                    .filter(p -> p.name().equals(project))
+                    .map(GitProjectManager.ProjectStatus::branch)
+                    .filter(b -> b != null && !b.isBlank())
+                    .findFirst().orElse(null);
+            String yaml = RunnerSetup.workflowYaml(project, branch, cfg);
 
             boolean existed = Files.exists(target);
             if (existed && !optBool(body, "overwrite")) {

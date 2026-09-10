@@ -319,3 +319,25 @@ there and differs (it may have gained steps that are nothing to do with this
 module), and re-running it with nothing changed reports `unchanged` rather than
 making an empty commit. A commit that cannot be pushed reports exactly that; the
 commit stands.
+
+### Proved end to end (2.18.0)
+
+Everything above was verified against the module alone until 10/09/2026, when the whole loop was
+run for real: a GitHub repository, a self-hosted runner registered with the generated `config.sh`
+command verbatim, the gateway's own committed workflow, and a push to the default branch.
+
+A push at 03:31:00Z reached the gateway at 03:31:11Z. The workflow run reported
+`{"ok":true,"project":"_runner_live_","result":"pulled 2 file(s)"}`, the files were on disk, the
+project came back clean and the sync event logged `Pulled 2 changed file(s) from origin/master`.
+
+Two defects only that exercise could find, both fixed:
+
+- The generated workflow triggered on `main` while project-init creates `master`. A trigger naming
+  a branch that does not exist produces no run and no error.
+- A credential could not be attached to a project remote from the gateway page at all, so a remote
+  set up there could never authenticate.
+
+One thing worth knowing before setting this up: GitHub refuses to let an OAuth-app token write
+`.github/workflows/*` without the `workflow` scope. A personal access token used to push the
+workflow by hand needs that scope; the gateway pushing it with the project's own credential does
+not hit this, because a PAT or deploy key is not an OAuth-app token.

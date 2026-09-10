@@ -10,6 +10,7 @@ import {
   useSetProjectImagesMutation,
   useSnapshotProjectImagesMutation,
   useSetProjectRemoteMutation,
+  useSetProjectCredentialMutation,
 } from "./GitConfig.service";
 import { errorToast } from "./errors";
 import { selectValue } from "./selectValue";
@@ -25,6 +26,8 @@ const Projects = () => {
     useSetProjectRemoteMutation();
   const [setImages, { isLoading: settingImages }] =
     useSetProjectImagesMutation();
+  const [setCredential, { isLoading: settingCredential }] =
+    useSetProjectCredentialMutation();
   const [snapshotImages, { isLoading: snapshotting }] =
     useSnapshotProjectImagesMutation();
   const toasts = useToastNotifications();
@@ -63,6 +66,18 @@ const Projects = () => {
       }
       if (imagesChanged) {
         steps.push(setImages({ project: target.name, imagePrefix }).unwrap());
+      }
+      // Attaching the credential was previously only possible in the Designer's Remotes popup,
+      // so a remote set from this page could never authenticate.
+      if (chosen) {
+        steps.push(
+          setCredential({
+            project: target.name,
+            remoteName: target.remoteName || "origin",
+            sshKeyId: chosen.type === "SSH" ? chosen.id : 0,
+            httpsCredentialId: chosen.type === "HTTPS" ? chosen.id : 0,
+          }).unwrap()
+        );
       }
       if (steps.length === 0) {
         close();
@@ -227,9 +242,9 @@ const Projects = () => {
               </p>
             </>
           ) : null}
-          {!target.versioned && url.trim() !== "" ? (
+          {url.trim() !== "" ? (
             <SelectInput
-              label="Credential"
+              label="Credential — how this gateway authenticates to the remote"
               value={credId}
               values={credentials.map((c) => ({
                 label: `${c.type} — ${c.label}`,
@@ -244,7 +259,12 @@ const Projects = () => {
             </Button>
             <Button
               colorClass="primary"
-              disabled={initialising || settingRemote || settingImages}
+              disabled={
+                initialising ||
+                settingRemote ||
+                settingImages ||
+                settingCredential
+              }
               onClick={submit}
             >
               {initialising || settingRemote || settingImages

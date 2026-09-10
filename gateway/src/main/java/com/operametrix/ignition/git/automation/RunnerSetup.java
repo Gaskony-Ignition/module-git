@@ -80,17 +80,25 @@ public final class RunnerSetup {
                 "sudo ./svc.sh install && sudo ./svc.sh start");
     }
 
-    /** The workflow that runs on that runner and asks this gateway to sync. */
-    public static String workflowYaml(String project, GitRunnerRecord cfg) {
+    /**
+     * The workflow that runs on that runner and asks this gateway to sync.
+     *
+     * <p>The trigger branch is the project's own, not a hardcoded {@code main}. The module's
+     * project-init creates {@code master}, so a workflow that assumed {@code main} would sit
+     * there and never fire — no error, just nothing happening, which is the exact failure this
+     * generator exists to prevent.
+     */
+    public static String workflowYaml(String project, String branch, GitRunnerRecord cfg) {
         String labels = "[" + String.join(", ", cfg.getLabels().split("\\s*,\\s*")) + "]";
         String base = cfg.getGatewayUrl().isEmpty() ? "<gateway url>" : cfg.getGatewayUrl();
+        String onBranch = branch == null || branch.isBlank() ? "main" : branch.trim();
         return String.join("\n",
                 "# " + WORKFLOW_PATH,
                 "name: Sync to Ignition",
                 "",
                 "on:",
                 "  push:",
-                "    branches: [main]",
+                "    branches: [" + onBranch + "]",
                 "",
                 "jobs:",
                 "  sync:",
