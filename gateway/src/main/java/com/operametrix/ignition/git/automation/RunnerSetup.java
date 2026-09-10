@@ -25,6 +25,13 @@ public final class RunnerSetup {
      */
     private static final String RUNNER_VERSION = "2.328.0";
 
+    /**
+     * Where the workflow has to live. GitHub reads workflows only from the repository root, and
+     * for a project repository the root IS the project folder — so the file lands beside the
+     * project's own resources. The leading dot keeps it out of Ignition's resource scan.
+     */
+    public static final String WORKFLOW_PATH = ".github/workflows/ignition-sync.yml";
+
     private RunnerSetup() {
     }
 
@@ -78,7 +85,7 @@ public final class RunnerSetup {
         String labels = "[" + String.join(", ", cfg.getLabels().split("\\s*,\\s*")) + "]";
         String base = cfg.getGatewayUrl().isEmpty() ? "<gateway url>" : cfg.getGatewayUrl();
         return String.join("\n",
-                "# .github/workflows/ignition-sync.yml",
+                "# " + WORKFLOW_PATH,
                 "name: Sync to Ignition",
                 "",
                 "on:",

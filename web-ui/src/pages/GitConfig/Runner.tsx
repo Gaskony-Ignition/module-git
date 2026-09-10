@@ -2,7 +2,11 @@ import React from "react";
 import { Button, Loading, useToastNotifications } from "../../webui";
 // Label-painting wrappers — the platform inputs render `label` into an invisible notch legend.
 import { SelectInput, TextInput } from "./fields";
-import { useGetRunnerQuery, useSaveRunnerMutation } from "./GitConfig.service";
+import {
+  useCommitRunnerWorkflowMutation,
+  useGetRunnerQuery,
+  useSaveRunnerMutation,
+} from "./GitConfig.service";
 import { errorToast } from "./errors";
 import { selectValue } from "./selectValue";
 
@@ -42,6 +46,8 @@ export default function Runner() {
   const [project, setProject] = React.useState<string | undefined>(undefined);
   const { data, isLoading, refetch } = useGetRunnerQuery(project);
   const [save, { isLoading: saving }] = useSaveRunnerMutation();
+  const [commitWorkflow, { isLoading: committing }] =
+    useCommitRunnerWorkflowMutation();
 
   const [gatewayUrl, setGatewayUrl] = React.useState("");
   const [labels, setLabels] = React.useState("");
@@ -140,7 +146,10 @@ export default function Runner() {
           <p className="gitcfg-auto-hint">
             {data.hasToken
               ? "A token is set. Generating a new one immediately stops the old one working."
-              : "No token yet. Until one exists the gateway answers the runner with a 404."}
+              : "No token yet. Until one exists the gateway answers the runner with a 404."}{" "}
+            Save it in the repository as the secret{" "}
+            <code>IGNITION_SYNC_TOKEN</code> — that is the name the workflow
+            reads.
           </p>
           <Button
             colorClass="secondary"
@@ -175,11 +184,38 @@ export default function Runner() {
 
           <h4 className="gitcfg-step">4 · Add the workflow</h4>
           <p className="gitcfg-auto-hint">
-            Commit this to the repository. It runs on the runner and asks the
-            gateway to pull.
+            The gateway already has push rights to this repository, so it can
+            commit the workflow itself. It refuses to overwrite a different
+            workflow that is already there.
           </p>
+          <Button
+            disabled={committing || !gatewayUrl}
+            onClick={async () => {
+              try {
+                const r = await commitWorkflow({
+                  project: data.project,
+                }).unwrap();
+                if (r.unchanged) toasts.notifySuccess("Already committed");
+                else if (r.pushed) toasts.notifySuccess("Committed and pushed");
+                else
+                  toasts.notify({
+                    type: "error",
+                    title: "Committed, but the push failed",
+                    message:
+                      r.pushError || "Push the project from the Designer.",
+                    autoClose: false,
+                    isDismissible: true,
+                  });
+              } catch (e) {
+                errorToast(toasts, "Could not commit the workflow")(e);
+              }
+            }}
+          >
+            Commit the workflow to the repository
+          </Button>
+          <p className="gitcfg-auto-hint">Or copy it in by hand:</p>
           <Snippet
-            label=".github/workflows/ignition-sync.yml"
+            label={".github/workflows/ignition-sync.yml"}
             text={data.workflowYaml}
           />
 

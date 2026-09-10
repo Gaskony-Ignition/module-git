@@ -299,3 +299,23 @@ reach it. A webhook route is only useful if the internet can address it; this
 one is only ever called from inside the same network, so it can sit behind
 whatever already protects the gateway. Turning the feature off closes it
 entirely — with no token, it is a 404.
+
+
+### The workflow file is committed by the gateway (2.17.0)
+
+The module holds push rights for the project repository already. Generating a
+file for someone to copy into that same repository by hand was a step with no
+purpose, so *Commit the workflow to the repository* does it: write, commit
+through the ordinary project-commit path, push.
+
+The file goes to `.github/workflows/ignition-sync.yml` **inside the project
+folder**, because for a project repository the project folder is the repository
+root, and GitHub reads workflows only from the root. The leading dot keeps it
+out of Ignition's resource scan — verified on 8.3.8, no scan error and the
+project stays healthy.
+
+Two refusals worth keeping: it will not overwrite a workflow that is already
+there and differs (it may have gained steps that are nothing to do with this
+module), and re-running it with nothing changed reports `unchanged` rather than
+making an empty commit. A commit that cannot be pushed reports exactly that; the
+commit stands.

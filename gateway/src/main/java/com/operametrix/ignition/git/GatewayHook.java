@@ -38,11 +38,15 @@ import com.inductiveautomation.ignition.gateway.model.GatewayContext;
 import com.inductiveautomation.ignition.gateway.rpc.GatewayRpcImplementation;
 import com.inductiveautomation.ignition.gateway.web.session.WebUiSession;
 import com.inductiveautomation.ignition.gateway.web.systemjs.SystemJsModule;
+import com.operametrix.ignition.git.managers.GitManager;
 import com.operametrix.ignition.git.managers.GitProjectManager;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -361,6 +365,10 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         routes.newRoute("/runner").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.WRITE)
                 .handler(this::handleSaveRunner).mount();
+
+        routes.newRoute("/runner-workflow").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleRunnerWorkflow).mount();
 
         // OPEN_ROUTE on purpose and uniquely: a workflow step has no gateway session and no way
         // to obtain the X-CSRF-Token that requirePermission's strategy demands, so the route
@@ -1448,6 +1456,78 @@ public class GatewayHook extends AbstractGatewayModuleHook {
                 // The only time this value ever leaves the gateway. It is not recoverable
                 // afterwards — a lost token is replaced, not read back.
                 o.addProperty("token", issued);
+            }
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    /**
+     * Writes the sync workflow into the project repository, commits it and pushes.
+     *
+     * <p>The module already holds push rights for this repository — that is how project
+     * versioning works at all — so asking someone to copy a generated file into it by hand was
+     * a step with no purpose. The commit is the ordinary project-commit path, so it raises the
+     * same git event and appears in the same history as any other.
+     */
+    private Object handleRunnerWorkflow(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            String project = optString(body, "project");
+            if (project == null || project.isBlank()) {
+                throw new RuntimeException("A project is required.");
+            }
+            GitRunnerRecord cfg = GitRunnerRecord.get();
+            if (cfg.getGatewayUrl().isBlank()) {
+                throw new RuntimeException(
+                        "Set the gateway address first — the workflow has to carry a real URL.");
+            }
+
+            Path root = GitManager.getProjectFolderPath(project);
+            Path target = root.resolve(RunnerSetup.WORKFLOW_PATH);
+            String yaml = RunnerSetup.workflowYaml(project, cfg);
+
+            boolean existed = Files.exists(target);
+            if (existed && !optBool(body, "overwrite")) {
+                String current = Files.readString(target, StandardCharsets.UTF_8);
+                if (current.equals(yaml)) {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("ok", true);
+                    o.addProperty("unchanged", true);
+                    return o.toString();
+                }
+                // Never silently rewrite a workflow someone has edited — it may have gained
+                // steps that have nothing to do with this module.
+                throw new RuntimeException("A different " + RunnerSetup.WORKFLOW_PATH
+                        + " is already committed. Tick overwrite to replace it.");
+            }
+
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, yaml, StandardCharsets.UTF_8);
+
+            String message = existed
+                    ? "Update the Ignition sync workflow"
+                    : "Add the Ignition sync workflow";
+            scriptModule.commitImpl(project, req.getActor(),
+                    List.of(RunnerSetup.WORKFLOW_PATH), message, false);
+
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", true);
+            o.addProperty("committed", true);
+            // A commit that cannot be pushed is still progress, and the reason is worth saying
+            // plainly rather than failing the whole call.
+            try {
+                String remote = GitProjectManager.listProjectStatus().stream()
+                        .filter(p -> p.name().equals(project))
+                        .map(GitProjectManager.ProjectStatus::remoteName)
+                        .filter(n -> n != null && !n.isBlank())
+                        .findFirst().orElse("origin");
+                scriptModule.pushImpl(project, req.getActor(), remote, false, false, false);
+                o.addProperty("pushed", true);
+            } catch (Exception pushFailed) {
+                o.addProperty("pushed", false);
+                o.addProperty("pushError", GitEvents.reason(pushFailed));
             }
             return o.toString();
         } catch (Exception e) {

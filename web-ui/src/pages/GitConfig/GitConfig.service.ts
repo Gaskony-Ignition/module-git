@@ -449,6 +449,22 @@ export const gitConfigApi = baseApi.injectEndpoints({
       query: (body) => ({ url: `${BASE}/runner`, method: "POST", body }),
       invalidatesTags: ["runner"],
     }),
+    commitRunnerWorkflow: builder.mutation<
+      {
+        committed?: boolean;
+        unchanged?: boolean;
+        pushed?: boolean;
+        pushError?: string;
+      },
+      { project: string; overwrite?: boolean }
+    >({
+      query: (body) => ({
+        url: `${BASE}/runner-workflow`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["runner", "history", "projects"],
+    }),
   }),
   overrideExisting: false,
 });
@@ -489,4 +505,5 @@ export const {
   useSyncNowMutation,
   useGetRunnerQuery,
   useSaveRunnerMutation,
+  useCommitRunnerWorkflowMutation,
 } = gitConfigApi;

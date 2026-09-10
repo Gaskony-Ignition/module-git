@@ -132,11 +132,11 @@ says whether it arrived. Outbound triggers and scheduled sync are on the same
 tab.
 
 Push-time sync: **Automation → Actions runner**. Tick *Accept sync requests from
-a runner*, enter the address the runner will reach this gateway on, generate a
-token and save it as the repository secret the generated workflow names. The
-remaining blocks are the runner registration command and the workflow — copy
-each where it says. Run the test command from the runner machine before relying
-on it.
+a runner*, enter the address the runner will reach this gateway on, and generate
+a token — save it in the repository as the secret `IGNITION_SYNC_TOKEN`. Press
+*Commit the workflow to the repository* and the gateway commits and pushes the
+workflow itself. The one block left to copy is the runner install command; run
+it on the runner machine, then run the test command before relying on it.
 
 To build from source you need `gradle.properties` with the signing block —
 copy it from `gradle.template.properties` and fill in the keystore details:

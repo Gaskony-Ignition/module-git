@@ -3,6 +3,24 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.17.0] - 2026-09-10
+
+### Added
+- **The gateway commits the sync workflow itself.** It already holds push rights for the project
+  repository — that is how project versioning works at all — so asking someone to copy a generated
+  file into it by hand was a step with no purpose. *Commit the workflow to the repository* writes
+  `.github/workflows/ignition-sync.yml`, commits it through the ordinary project-commit path (so it
+  raises the same git event and lands in the same history as any other commit) and pushes.
+
+  It refuses to overwrite a workflow that is already there and differs, since that file may have
+  gained steps that have nothing to do with this module; re-running it when nothing has changed
+  reports `unchanged` rather than making an empty commit. A commit that cannot be pushed is
+  reported as exactly that — the commit stands and the push reason is shown — rather than failing
+  the whole operation.
+
+  Setup is now three steps: generate a token, save it in the repository as `IGNITION_SYNC_TOKEN`
+  (the tab names the secret), and run the install block on the runner machine.
+
 ## [2.16.0] - 2026-09-10
 
 ### Added
