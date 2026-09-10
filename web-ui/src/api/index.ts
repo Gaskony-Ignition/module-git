@@ -52,6 +52,7 @@ const baseApi = createApi({
     "ignore",
     "projects",
     "automation",
+    "runner",
   ],
   endpoints: () => ({}),
   keepUnusedDataFor: 0,

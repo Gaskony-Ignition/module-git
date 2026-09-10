@@ -56,6 +56,15 @@ visible.
 
 ![The Automation tab, with its event log](docs/images/versioning-automation.png)
 
+A merge does not have to wait for the next poll. A GitHub Actions self-hosted
+runner connects out to GitHub from your own network and is handed workflow jobs
+over that same connection, so it can ask the gateway to pull the moment a branch
+moves — with nothing reaching in. The tab generates the whole setup with this
+gateway's own values already in it: the registration command, the workflow, the
+token, and a one-line check that the runner can reach the gateway.
+
+![The Actions runner tab, with the generated setup](docs/images/versioning-runner.png)
+
 ## What it does
 
 **In the Designer** — clone or initialise a project repository, manage remotes
@@ -78,7 +87,11 @@ presets and `${owner}`/`${repo}` derived from the repository's own remote, so on
 rule serves every project. Inbound sync fetches on a timer and fast-forwards
 when the tracked branch moves, then requests a project scan — polling rather
 than a webhook, because GitHub cannot reach most gateways. A sync refuses when
-the working tree is dirty rather than discarding someone's unsaved work.
+the working tree is dirty rather than discarding someone's unsaved work. For
+push-time sync instead of polling, the **Actions runner** tab generates the
+setup for a GitHub Actions self-hosted runner and opens one token-authenticated
+route for it to call; the module generates the configuration but never installs
+or runs the runner itself.
 
 Changes over upstream 2.1.0:
 
@@ -86,7 +99,8 @@ Changes over upstream 2.1.0:
 - Change badges in the Designer's Project Browser.
 - Projects and Credentials tabs: see and set up project repositories, and create
   the credentials they need, without opening a Designer first.
-- Automation: git events into Jython, outbound triggers for CI, scheduled sync.
+- Automation: git events into Jython, outbound triggers for CI, scheduled sync,
+  and generated setup for a GitHub Actions self-hosted runner.
 - A project versions one named image folder rather than exporting the whole
   gateway image store into every repository.
 - Commits stage exactly what the change list shows. They previously staged the
@@ -116,6 +130,13 @@ events to a script*, pick a project and a function path such as
 `Git.Events.onGitEvent`, and press **Fire a test event** — the event log below
 says whether it arrived. Outbound triggers and scheduled sync are on the same
 tab.
+
+Push-time sync: **Automation → Actions runner**. Tick *Accept sync requests from
+a runner*, enter the address the runner will reach this gateway on, generate a
+token and save it as the repository secret the generated workflow names. The
+remaining blocks are the runner registration command and the workflow — copy
+each where it says. Run the test command from the runner machine before relying
+on it.
 
 To build from source you need `gradle.properties` with the signing block —
 copy it from `gradle.template.properties` and fill in the keystore details:

@@ -182,6 +182,18 @@ export interface SyncSetting {
   intervalSeconds: number;
   ignitionUser: string;
 }
+export interface RunnerConfig {
+  enabled: boolean;
+  hasToken: boolean;
+  gatewayUrl: string;
+  labels: string;
+  projects: string[];
+  project: string;
+  repoUrl: string;
+  installScript: string;
+  workflowYaml: string;
+  testCommand: string;
+}
 export interface EventLogEntry {
   type: string;
   outcome: string;
@@ -415,6 +427,28 @@ export const gitConfigApi = baseApi.injectEndpoints({
       query: (body) => ({ url: `${BASE}/sync-now`, method: "POST", body }),
       invalidatesTags: ["automation", "projects"],
     }),
+    getRunner: builder.query<RunnerConfig, string | undefined>({
+      query: (project) =>
+        project
+          ? `${BASE}/runner?project=${encodeURIComponent(project)}`
+          : `${BASE}/runner`,
+      providesTags: ["runner"],
+    }),
+    // The response carries the new token exactly once, when generateToken is set. There is no
+    // endpoint that reads it back — a lost token is replaced, not recovered.
+    saveRunner: builder.mutation<
+      { hasToken: boolean; token?: string },
+      {
+        enabled?: boolean;
+        gatewayUrl?: string;
+        labels?: string;
+        generateToken?: boolean;
+        clearToken?: boolean;
+      }
+    >({
+      query: (body) => ({ url: `${BASE}/runner`, method: "POST", body }),
+      invalidatesTags: ["runner"],
+    }),
   }),
   overrideExisting: false,
 });
@@ -453,4 +487,6 @@ export const {
   useRemoveTriggerMutation,
   useSaveSyncMutation,
   useSyncNowMutation,
+  useGetRunnerQuery,
+  useSaveRunnerMutation,
 } = gitConfigApi;

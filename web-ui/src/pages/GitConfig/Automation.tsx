@@ -16,13 +16,14 @@ import {
   useSyncNowMutation,
   useTestAutomationMutation,
 } from "./GitConfig.service";
+import Runner from "./Runner";
 import { errorToast } from "./errors";
 import { selectValue } from "./selectValue";
 
 // Three things that were previously only possible by editing scripts on a gateway you could
 // already reach: react to git activity in Jython, call out to CI when the gateway pushes, and
 // bring a merged branch down without anyone opening a Designer.
-type Section = "delivery" | "triggers" | "sync";
+type Section = "delivery" | "triggers" | "sync" | "runner";
 
 const PRESETS: Record<string, Partial<TriggerRule>> = {
   "GitHub — repository_dispatch": {
@@ -235,6 +236,7 @@ const Automation = () => {
             ["delivery", "Event delivery"],
             ["triggers", "Outbound triggers"],
             ["sync", "Scheduled sync"],
+            ["runner", "Actions runner"],
           ] as [Section, string][]
         ).map(([key, label]) => (
           <button
@@ -695,6 +697,8 @@ const Automation = () => {
           ) : null}
         </>
       ) : null}
+
+      {section === "runner" ? <Runner /> : null}
 
       <div className="gitcfg-auto-log">
         <div className="gitcfg-excluded-head">

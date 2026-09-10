@@ -1,11 +1,14 @@
 package com.operametrix.ignition.git;
 
 import com.operametrix.ignition.git.automation.GitEvent;
+import com.operametrix.ignition.git.automation.RunnerSetup;
+import com.operametrix.ignition.git.automation.RunnerTrigger;
 import com.operametrix.ignition.git.automation.GitEvents;
 import com.operametrix.ignition.git.automation.SyncScheduler;
 import com.operametrix.ignition.git.records.GitAutomationRecord;
 import com.operametrix.ignition.git.records.GitConfigRemoteRecord;
 import com.operametrix.ignition.git.records.GitProjectsConfigRecord;
+import com.operametrix.ignition.git.records.GitRunnerRecord;
 import com.operametrix.ignition.git.records.GitSyncRecord;
 import com.operametrix.ignition.git.records.GitTriggerRecord;
 import com.operametrix.ignition.git.records.GitRemoteCredentialsRecord;
@@ -20,6 +23,7 @@ import com.inductiveautomation.ignition.common.gson.JsonArray;
 import com.inductiveautomation.ignition.common.gson.JsonElement;
 import com.inductiveautomation.ignition.common.gson.JsonObject;
 import com.inductiveautomation.ignition.common.licensing.LicenseState;
+import com.inductiveautomation.ignition.gateway.dataroutes.AccessControlStrategy;
 import com.inductiveautomation.ignition.gateway.config.ResourceTypeMetaRegistry;
 import com.inductiveautomation.ignition.gateway.secrets.ManagedSecretProvider;
 import com.inductiveautomation.ignition.gateway.secrets.Plaintext;
@@ -63,6 +67,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     private GitAutomationRecord.Handler automationHandler;
     private GitTriggerRecord.Handler triggerHandler;
     private GitSyncRecord.Handler syncHandler;
+    private GitRunnerRecord.Handler runnerHandler;
     private ConfigAutoCommitter autoCommitter;
 
     /** Gateway context, available after {@link #setup(GatewayContext)} has run. */
@@ -85,6 +90,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         registry.register(GitAutomationRecord.META);
         registry.register(GitTriggerRecord.META);
         registry.register(GitSyncRecord.META);
+        registry.register(GitRunnerRecord.META);
 
         // Create the resource handlers (DAOs) and publish them to the record façades.
         projectHandler = new GitProjectsConfigRecord.Handler(context);
@@ -96,6 +102,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         automationHandler = new GitAutomationRecord.Handler(context);
         triggerHandler = new GitTriggerRecord.Handler(context);
         syncHandler = new GitSyncRecord.Handler(context);
+        runnerHandler = new GitRunnerRecord.Handler(context);
 
         GitProjectsConfigRecord.setHandler(projectHandler);
         GitReposUsersRecord.setHandler(repoUserHandler);
@@ -106,6 +113,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         GitAutomationRecord.setHandler(automationHandler);
         GitTriggerRecord.setHandler(triggerHandler);
         GitSyncRecord.setHandler(syncHandler);
+        GitRunnerRecord.setHandler(runnerHandler);
 
         scriptModule = new GatewayScriptModule(context);
 
@@ -138,6 +146,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         automationHandler.startup();
         triggerHandler.startup();
         syncHandler.startup();
+        runnerHandler.startup();
 
         // Event delivery and scheduled sync. Both are inert until configured, so starting them
         // unconditionally costs one idle thread each and keeps the wiring in one place.
@@ -165,6 +174,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     public void shutdown() {
         SyncScheduler.shutdown();
         GitEvents.shutdown();
+        if (runnerHandler != null) runnerHandler.shutdown();
         if (syncHandler != null) syncHandler.shutdown();
         if (triggerHandler != null) triggerHandler.shutdown();
         if (automationHandler != null) automationHandler.shutdown();
@@ -342,6 +352,22 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         routes.newRoute("/deinit").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
                 .requirePermission(PermissionType.WRITE)
                 .handler(this::handleDeinit).mount();
+
+        // GitHub Actions runner: the setup helper, and the one route the runner itself calls.
+        routes.newRoute("/runner").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.READ).nocache()
+                .handler(this::handleGetRunner).mount();
+
+        routes.newRoute("/runner").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .requirePermission(PermissionType.WRITE)
+                .handler(this::handleSaveRunner).mount();
+
+        // OPEN_ROUTE on purpose and uniquely: a workflow step has no gateway session and no way
+        // to obtain the X-CSRF-Token that requirePermission's strategy demands, so the route
+        // authenticates itself by bearer token. It stays a 404 until one is generated.
+        routes.newRoute("/runner-sync").method(HttpMethod.POST).type(RouteGroup.TYPE_JSON)
+                .accessControl(AccessControlStrategy.OPEN_ROUTE).nocache()
+                .handler(RunnerTrigger::handle).mount();
 
         // --- Excluded files (.gitignore management) ---
         routes.newRoute("/tree").method(HttpMethod.GET).type(RouteGroup.TYPE_JSON)
@@ -1347,6 +1373,82 @@ public class GatewayHook extends AbstractGatewayModuleHook {
             cfg.save();
             JsonObject o = new JsonObject();
             o.addProperty("ok", true);
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    private Object handleGetRunner(RequestContext req, HttpServletResponse resp) {
+        try {
+            GitRunnerRecord cfg = GitRunnerRecord.get();
+            JsonObject o = new JsonObject();
+            o.addProperty("enabled", cfg.isEnabled());
+            // Never the token itself. It is shown once, when it is generated, and after that the
+            // browser can only learn whether one exists.
+            o.addProperty("hasToken", cfg.hasToken());
+            o.addProperty("gatewayUrl", cfg.getGatewayUrl());
+            o.addProperty("labels", cfg.getLabels());
+
+            // The snippets are generated per project, because the runner registers against the
+            // project's own repository.
+            String project = req.getParameter("project");
+            String remoteUrl = null;
+            JsonArray projects = new JsonArray();
+            for (GitProjectManager.ProjectStatus ps : GitProjectManager.listProjectStatus()) {
+                if (ps.remoteUrl() == null || ps.remoteUrl().isBlank()) {
+                    continue;
+                }
+                projects.add(ps.name());
+                if (project == null || project.isBlank() || project.equals(ps.name())) {
+                    if (remoteUrl == null) {
+                        remoteUrl = ps.remoteUrl();
+                        project = ps.name();
+                    }
+                }
+            }
+            o.add("projects", projects);
+            o.addProperty("project", project == null ? "" : project);
+            o.addProperty("repoUrl", RunnerSetup.repoUrl(remoteUrl));
+            o.addProperty("installScript", RunnerSetup.installScript(remoteUrl, cfg));
+            o.addProperty("workflowYaml", RunnerSetup.workflowYaml(project, cfg));
+            o.addProperty("testCommand", RunnerSetup.testCommand(project, cfg));
+            return o.toString();
+        } catch (Exception e) {
+            return error(resp, e);
+        }
+    }
+
+    private Object handleSaveRunner(RequestContext req, HttpServletResponse resp) {
+        try {
+            JsonObject body = new Gson().fromJson(req.readBody(), JsonObject.class);
+            GitRunnerRecord cfg = GitRunnerRecord.get();
+            if (body.has("enabled")) {
+                cfg.setEnabled(body.get("enabled").getAsBoolean());
+            }
+            if (body.has("gatewayUrl")) {
+                cfg.setGatewayUrl(optString(body, "gatewayUrl"));
+            }
+            if (body.has("labels")) {
+                cfg.setLabels(optString(body, "labels"));
+            }
+
+            String issued = null;
+            if (body.has("generateToken") && body.get("generateToken").getAsBoolean()) {
+                issued = cfg.generateToken();
+            } else if (body.has("clearToken") && body.get("clearToken").getAsBoolean()) {
+                cfg.setToken(null);
+            }
+            cfg.save();
+
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", true);
+            o.addProperty("hasToken", cfg.hasToken());
+            if (issued != null) {
+                // The only time this value ever leaves the gateway. It is not recoverable
+                // afterwards — a lost token is replaced, not read back.
+                o.addProperty("token", issued);
+            }
             return o.toString();
         } catch (Exception e) {
             return error(resp, e);
