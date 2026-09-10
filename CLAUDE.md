@@ -34,7 +34,7 @@ Scopes: D = Designer, G = Gateway. The Vision client scope is unused — there i
 
 **Hooks** are the per-scope entry points (Ignition `setup`/`startup`/`shutdown`):
 - `DesignerHook` — builds the status bar, the dockable Commit/History panels, and a user-verification timer; talks to the gateway via `GatewayConnection.getRpcInterface(...)`. If `isProjectRegistered()` is false it shows a minimal "Configure" + user-button bar so credentials can be added before init; after init via `InitRepoPopup` it calls `reinitializeAfterSetup()` to build the full bar. A 1-second `panelVisibilityTimer` re-shows the Commit/History panels across workspace switches (checks hidden / null-in-DockingManager / `!isDisplayable()`). Exposes a static `instance` for `GitActionManager` callbacks.
-- `GatewayHook` — registers the six resource types and starts their `NamedResourceHandler`s, runs the one-time legacy SimpleORM→resource importer, and registers the gateway RPC implementation (`getRpcImplementation()`). Also wires the config-as-code feature: registers the React page in the `NavigationModel` (Platform → System → "Versioning"), overrides `getMountPathAlias()` (`git-config`) / `getMountedResourceFolder()` (`mounted`), and mounts the REST routes in `mountRouteHandlers(RouteGroup)`.
+- `GatewayHook` — registers the nine resource types and starts their `NamedResourceHandler`s, runs the one-time legacy SimpleORM→resource importer, and registers the gateway RPC implementation (`getRpcImplementation()`). Also wires the config-as-code feature: registers the React page in the `NavigationModel` (Platform → System → "Versioning"), overrides `getMountPathAlias()` (`git-config`) / `getMountedResourceFolder()` (`mounted`), and mounts the REST routes in `mountRouteHandlers(RouteGroup)`.
 
 **RPC pattern** (8.3 module RPC): `GitScriptInterface` (common) is the contract, annotated `@RpcInterface(packageId="com.operametrix.ignition.git")` and exposing a shared `SERIALIZER`. The serializer is a custom `ProtoRpcSerializer.newBuilder()` instance — `DEFAULT_INSTANCE` has no `Dataset` support, so it registers a Java-serialization `BinaryAdapter` for `Dataset`/`BasicDataset` (`ObjectSerializers.forUnsafeObject`); without it every `Dataset`-returning RPC round-trips empty with no error. `AbstractScriptModule` (common) is a plain abstract base that delegates each interface method to a `…Impl` abstract method, supplied by `GatewayScriptModule` (gateway) — which must `implements GitScriptInterface` *directly* (8.3's `RpcDelegate` discovers `@RpcInterface` only on the concrete class's direct interfaces, no superclass walk). The gateway registers it via `GatewayHook.getRpcImplementation()` → `GatewayRpcImplementation.of(SERIALIZER, scriptModule)`; the Designer obtains a proxy via `GatewayConnection.getRpcInterface(SERIALIZER, "com.operametrix.ignition.git", GitScriptInterface.class)`.
 
@@ -77,7 +77,7 @@ Scopes: D = Designer, G = Gateway. The Vision client scope is unused — there i
   with `FileNotFoundException` — so init could **never** complete on a gateway that was actually
   running. Ignoring `valueStore.idb` alone is not enough; the sidecars are separate paths.
 
-The page is React (8.3 gateway pages are React-only via `NavigationModel`; Wicket config pages are gone, and there is **no** module-accessible API for a global banner-on-all-pages or a dynamic nav badge — verified against `gateway-api-8.3.6`). It talks to the gateway via REST routes mounted in `GatewayHook.mountRouteHandlers` (NOT the RPC interface), under `/data/git-config/…`: `GET /status|/history|/commit-files|/file-diff|/remote|/secret-providers|/tree|/ignore`, `POST /restore|/init|/deinit|/remote|/remote-remove|/remote-test|/push|/ignore`. Reads require `PermissionType.READ`, mutations `WRITE`; the acting author is `RequestContext.getActor()`. The frontend lives in `web-ui/` and is built from the standard `@inductiveautomation/ignition-web-ui` components (`DataGrid`, `Chip`, `Button`, `PageHeader`, `Modal`, `Loading`, `Tooltip`, and the drawer/form set `Drawer`/`DrawerTemplate`/`Card`/`Form`/`FormControlInput`/`Radio`/`SelectInput`/`TextInput`/`TextArea`/`TextAutocomplete`) — imported through `src/webui.ts`, a one-line shim that re-exports them cast to `any` (the package publishes strict internal prop types, e.g. `DataGrid` requires `paginationParams`/`setTableQueryParams` that have runtime defaults; the shim lets us pass only the props we need, mirroring the storybook examples). RTK Query targets a single `BASE` constant in `src/config.ts` (adjust if the live route prefix differs from `/data/git-config`); the base query lazily fetches `/csrf` and attaches the `X-CSRF-Token` header on mutations (the gateway's web-session access control rejects unsafe methods without it). Webpack emits a UMD bundle to `mounted/gitConfig.js`, packed into the gateway jar via `modlImplementation(project(":web-ui"))`, served at `/res/git-config/gitConfig.js`, and mounted as component `GitConfigPage`.
+The page is React (8.3 gateway pages are React-only via `NavigationModel`; Wicket config pages are gone, and there is **no** module-accessible API for a global banner-on-all-pages or a dynamic nav badge — verified against `gateway-api-8.3.6`). It talks to the gateway via REST routes mounted in `GatewayHook.mountRouteHandlers` (NOT the RPC interface), under `/data/git-config/…`. Config-as-code: `GET /status|/history|/commit-files|/file-diff|/remote|/secret-providers|/tree|/ignore`, `POST /restore|/init|/deinit|/remote|/remote-remove|/remote-test|/push|/ignore|/update-from-remote`. Projects and credentials: `GET /projects|/credentials`, `POST /project-init|/project-remote|/project-images|/project-snapshot-images|/credentials|/credential-remove`. Automation: `GET /automation`, `POST /automation|/automation-test|/automation-clear|/trigger|/trigger-remove|/sync|/sync-now`. Reads require `PermissionType.READ`, mutations `WRITE`; the acting author is `RequestContext.getActor()`. The frontend lives in `web-ui/` and is built from the standard `@inductiveautomation/ignition-web-ui` components (`DataGrid`, `Chip`, `Button`, `PageHeader`, `Modal`, `Loading`, `Tooltip`, and the drawer/form set `Drawer`/`DrawerTemplate`/`Card`/`Form`/`FormControlInput`/`Radio`/`SelectInput`/`TextInput`/`TextArea`/`TextAutocomplete`) — imported through `src/webui.ts`, a one-line shim that re-exports them cast to `any` (the package publishes strict internal prop types, e.g. `DataGrid` requires `paginationParams`/`setTableQueryParams` that have runtime defaults; the shim lets us pass only the props we need, mirroring the storybook examples). RTK Query targets a single `BASE` constant in `src/config.ts` (adjust if the live route prefix differs from `/data/git-config`); the base query lazily fetches `/csrf` and attaches the `X-CSRF-Token` header on mutations (the gateway's web-session access control rejects unsafe methods without it). Webpack emits a UMD bundle to `mounted/gitConfig.js`, packed into the gateway jar via `modlImplementation(project(":web-ui"))`, served at `/res/git-config/gitConfig.js`, and mounted as component `GitConfigPage`.
 
 **Project Browser change badges** (`GitChangeBadges`, Gaskony fork 07/09/2026) — resources that are
 changed and not yet committed carry a coloured dot in the Designer's Project Browser: green created,
@@ -117,6 +117,55 @@ row bounds changed nothing. A `DotBorder` sidesteps the delegate: Swing paints a
 the component and its insets reserve the width. Verified across two commit-then-change cycles.
 **Don't "simplify" this back to `addBadge`.**
 
+**Automation** (`gateway/.../automation/`, Gaskony fork 09/09/2026) — git activity drives Ignition.
+Every commit, push, pull, fetch, checkout, branch, revert, config auto-commit and scheduled sync
+raises a `GitEvent`, successes and failures alike. `GitEvents` is the bus: a bounded queue, a single
+daemon thread, a 50-entry ring buffer behind the page's Event log, and a `fire()` that never throws
+or blocks the git operation that called it.
+
+- `ScriptDelivery` builds ONE `PyDictionary` and delivers it to a project-library function and/or a
+  Gateway Event message handler. **Strings go through `Py.newStringOrUnicode`, never
+  `Py.newString`** — the latter throws above 0xFF, so one accented name or curly quote in a commit
+  message stopped the event reaching any handler at all.
+- `TriggerDelivery` posts to a configured URL with `${…}` substitution, `followRedirects(NEVER)` so
+  an Authorization header is never replayed to another host, and the credential injected into a
+  header and never logged.
+- **The two delivery paths are isolated from each other.** They shared one try block, so a payload
+  Jython refused to build meant the outbound trigger never ran either, and the log named only the
+  first failure.
+- `SyncScheduler` fetches on a per-project interval and fast-forwards when the tracked branch moves,
+  then `importProject` + a project scan. It **refuses a dirty working tree** rather than discarding
+  someone's unsaved work, and refuses an unborn repo rather than materialising a project unattended.
+
+**Polling is the inbound mechanism, deliberately.** An inbound GitHub webhook receiver was built in
+2.13.0 and removed in 2.14.0: a webhook is GitHub opening a connection *to* the gateway, and a
+credential cannot create an inbound route — an HTTPS token or SSH key authenticates the gateway
+calling *out*. `docs/AUTOMATION.md` carries the full reasoning. Do not rebuild it without a gateway
+GitHub can actually reach.
+
+**Image snapshot is scoped and merges** (`GitImageManager`) — two things that were both wrong:
+- **`getImages(path)` lists ONE level of the store and returns folders as entries** with a null
+  format and no bytes. The old export iterated the root listing and wrote every entry to disk, so on
+  8.3 it produced a single empty file named after the top folder and exported no image at all
+  (measured on 8.3.8, where the whole root listing is the one entry `Builtin`). It walks the tree
+  now, with depth and entry caps.
+- **Import merges; it never deletes.** The store is gateway-scoped, so clearing it before upload
+  made one project's `images/` authoritative for every other project — a project with no snapshot
+  wiped the platform's ~700 Builtin icons. An image dropped from a project therefore stays on the
+  gateway, which is the deliberate trade.
+
+**The React inputs paint their own labels** (`web-ui/src/pages/GitConfig/fields.tsx`) — the
+platform's `TextInput`/`SelectInput`/`TextArea` accept a `label` and render it only into MUI's
+notched-outline legend, which ships at opacity 0. Every bare field was unlabelled on screen with the
+text present in the DOM. Import those three from `./fields`, not from `../../webui`.
+
+**`Radio` is a radio GROUP**, not one radio: it takes a `radios` array and maps over it. Passing
+`label`/`checked` as if it were a single control reads `.map` on undefined and takes the whole page
+to "Application Error" — that shipped in the Credentials tab from 2.11.0 to 2.13.0. Same family as
+`SelectInput` needing `values` (not `options`), and `SelectInput.onChange` handing back MUI's event
+rather than the value (hence `selectValue.ts`). **Sweep every tab and every form in a browser before
+releasing**; a wrong prop on a platform component is invisible until the page is opened.
+
 **Designer popups** are Swing `JDialog`s parented to the Designer frame (`SwingUtilities.getWindowAncestor(parent)` so they overlay correctly on macOS fullscreen); abstract callbacks are overridden in anonymous subclasses inside `GitActionManager`. Concrete RPC signatures and callback names live in the code — don't duplicate them here.
 - `CommitPopup` — pick changes + message; "Amend last commit" pre-fills the last message and allows message-only amend; double-click a row → diff.
 - `DiffViewerPopup` — side-by-side LCS line diff (green added / red removed, synced scroll); default headers HEAD/Working Tree, overridable (used by `MergeConflictPopup` and `CommitDetailPopup`).
@@ -143,12 +192,15 @@ the component and its insets reserve the width. Verified across two commit-then-
   - **Metadata noise suppression**: `resource.json`/`thumbnail.png` are filtered from the changes list and commit file list when no sibling source file in the same resource dir also changed; applied in `getUncommitedChangesImpl`/`getCommitFilesImpl`.
 - `GitProjectManager` / `GitTagManager` / `GitThemeManager` / `GitImageManager` — project resource import, and gateway-resource snapshot (tags/themes/images) into the project tree. The theme snapshot stages into a system temp dir and only swaps into `themes/` on full success (a mid-copy failure can't destroy committed theme files); tag snapshot bounds the provider read with a 30s timeout.
 
-**Persistence** — six resource types on the 8.3 resource/config system. Each `*Record` class is now a mutable DTO façade over a nested `NamedResourceHandler`: the config is an inner Java `record`, and the resource name is `String.valueOf(numeric id)` so the RPC contract and Designer UI are unchanged (numeric long ids preserved). `GatewayHook` registers a `ResourceTypeMeta` per type and starts the handlers. A one-time `records.legacy.GitLegacyImporter` runs on first 8.3 startup: it registers the old SimpleORM tables' metas via `SchemaUpdater` (using minimal *public top-level* `Legacy*` `PersistentRecord` classes), reads each row, writes it as a resource, deletes the legacy row, and is idempotent (skips if the resource already exists; absent legacy tables on a fresh install are skipped). The six types:
-- `GitProjectsConfigRecord` — project registration marker (`id` + `projectName`). Holds no remote/URI data: `.git/config` is the sole source of truth for remotes. The clone URL is passed as a parameter to `initializeProject` and consumed by `materializeRepo` at registration time; it is never persisted. (Legacy 8.1 rows migrate identity only; their URI is dropped.)
+**Persistence** — nine resource types on the 8.3 resource/config system. Each `*Record` class is now a mutable DTO façade over a nested `NamedResourceHandler`: the config is an inner Java `record`, and the resource name is `String.valueOf(numeric id)` so the RPC contract and Designer UI are unchanged (numeric long ids preserved). `GatewayHook` registers a `ResourceTypeMeta` per type and starts the handlers. A one-time `records.legacy.GitLegacyImporter` runs on first 8.3 startup: it registers the old SimpleORM tables' metas via `SchemaUpdater` (using minimal *public top-level* `Legacy*` `PersistentRecord` classes), reads each row, writes it as a resource, deletes the legacy row, and is idempotent (skips if the resource already exists; absent legacy tables on a fresh install are skipped). The nine types:
+- `GitProjectsConfigRecord` — project registration marker (`id` + `projectName` + `imagePrefix`). `imagePrefix` names the ONE folder of the gateway image store this project versions, and is empty by default, meaning it versions none — see the image-snapshot note below. Holds no remote/URI data: `.git/config` is the sole source of truth for remotes. The clone URL is passed as a parameter to `initializeProject` and consumed by `materializeRepo` at registration time; it is never persisted. (Legacy 8.1 rows migrate identity only; their URI is dropped.)
 - `GitReposUsersRecord` — project↔user registration marker only (commit email comes from the Ignition user profile; auth is via the credential records).
 - `GitRemoteCredentialsRecord` — per (project, user, remote); holds `SshKeyId`/`HttpsCredentialId` FKs into the user-level credential tables.
 - `GitUserSshKeyRecord` — user-level SSH key (`IgnitionUser`, `KeyName`); the key is a `SecretConfig` (`sshKeySecret`) — embedded-encrypted or a Secret-Provider reference, same as the HTTPS password — with the legacy plaintext `sshKey` kept nullable so pre-migration rows still deserialize and upgrade on next save; `getSSHKey()` decrypts/falls-back unchanged for Designer callers. Shared across projects/remotes.
 - `GitConfigRemoteRecord` — gateway-level singleton: the data-dir config repo's remote (URI, branch, credential FK). Manual push only.
+- `GitAutomationRecord` — gateway-level singleton: whether git events are delivered to Jython at all, which event types, and the project-library function and/or Gateway Event message handler they go to.
+- `GitTriggerRecord` — one outbound HTTP rule (event-type/outcome/project/branch filters, URL, method, headers, body template, credential FK and the header the secret is injected into).
+- `GitSyncRecord` — per-project scheduled inbound sync (remote, branch, interval, the Ignition user whose credential authenticates it).
 - `GitUserHttpsCredentialRecord` — user-level HTTPS credential (`IgnitionUser`, `HostPattern`, `UserName`, `Password`). The password is held as a `SecretConfig.embedded(...)`: encrypted on `setPassword` via `GatewayContext.getSystemEncryptionService().encryptToJson(Plaintext)` and decrypted on `getPassword` via `Secret.create(ctx, secretConfig).getPlaintext()`. `HostPattern` is purely an organizational label / disambiguator in the credential picker — auth never matches on it; remotes resolve credentials only via their explicit FK.
 
 ### Key libraries

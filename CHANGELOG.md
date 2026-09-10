@@ -3,6 +3,30 @@
 Gaskony builds of the OperaMetrix Git module. Versions up to 2.1.0 are
 upstream's; everything below is this fork.
 
+## [2.15.0] - 2026-09-10
+
+### Fixed
+- **Form fields on the Versioning page had no visible label.** The platform's `TextInput`,
+  `SelectInput` and `TextArea` accept a `label` and render it only into MUI's notched-outline
+  legend, which ships at opacity 0 — it exists to cut the notch, not to be read. Measured on 8.3.8:
+  27 fields across Credentials, Projects and Automation had their label text present in the DOM and
+  invisible on screen, so what you were typing into was inferred from placeholder text and the
+  prose around it. Forcing the legend opaque only clips it against the border, so the label is now
+  painted above the control instead.
+
+  `web-ui/src/pages/GitConfig/fields.tsx` wraps the three inputs and every existing `label=` call
+  site works unchanged — import them from `./fields`, not from `../../webui`. Present since the
+  Credentials and Projects tabs shipped in 2.11.0.
+
+### Documentation
+- **The Automation screenshot in the README showed the Webhook tab**, removed in 2.14.0. Recaptured
+  on this build, along with the Projects and Excluded files screenshots.
+- **`CLAUDE.md` was two releases stale** — it still described six resource types (there are nine),
+  listed 16 of the 30 REST routes, and said nothing about the automation feature at all. It now
+  covers the event bus, the two delivery paths and their isolation, the scheduled sync, why polling
+  is the inbound mechanism, the image-store tree walk and merge, and the platform-component traps
+  that have now caused three separate page crashes.
+
 ## [2.14.0] - 2026-09-09
 
 ### Removed

@@ -576,3 +576,18 @@
   color: #667085;
   white-space: nowrap;
 }
+
+// A field and its painted label. See fields.tsx: the platform inputs put `label` into MUI's
+// notched-outline legend, which is never drawn, so the label is rendered here instead.
+.gitcfg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.75rem;
+}
+
+.gitcfg-field-label {
+  color: #667085;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}

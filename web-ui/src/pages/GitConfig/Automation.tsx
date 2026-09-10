@@ -1,12 +1,7 @@
 import React from "react";
-import {
-  Button,
-  Loading,
-  SelectInput,
-  TextArea,
-  TextInput,
-  useToastNotifications,
-} from "../../webui";
+import { Button, Loading, useToastNotifications } from "../../webui";
+// Label-painting wrappers — the platform inputs render `label` into an invisible notch legend.
+import { SelectInput, TextArea, TextInput } from "./fields";
 import {
   SyncSetting,
   TriggerRule,
